@@ -1,0 +1,8 @@
+edk2/Build/
+edk2/Conf/
+Q35Pkg/chips/*/vars/
+Q35Pkg/chips/*/tpm/
+Q35Pkg/debug.log
+Q35Pkg/uefi-shell.img
+Q35Pkg/uefi-shell.iso
+Q35Pkg/Q35Pkg,fdf
