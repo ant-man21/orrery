@@ -1,4 +1,5 @@
 edk2/Build/
+Build/
 edk2/Conf/
 Q35Pkg/chips/*/vars/
 Q35Pkg/chips/*/tpm/

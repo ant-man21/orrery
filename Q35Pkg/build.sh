@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
 # build.sh — EDK2 firmware builder
-# Usage: ./build.sh [-r|-d] [-c CHIP]
+# Usage: ./build.sh [-r|-d] [-c CHIP] [-C]
 #
 #   -r          Release build         (default)
 #   -d          Debug build
 #   -c CHIP     Chip target           (default: q35)
+#   -C          Clean before build
 #   -h          Show this help
 #
 # Chip configs live in:  chips/<CHIP>/chip.conf
@@ -18,6 +19,7 @@ EDK2_DIR="$(cd "$SCRIPT_DIR/../edk2" && pwd)"
 # ---------- defaults ----------------------------------------------------------
 BUILD_TYPE="RELEASE"
 CHIP="q35"
+CLEAN=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -25,11 +27,12 @@ usage() {
     exit 0
 }
 
-while getopts ":rdc:h" opt; do
+while getopts ":rdc:Ch" opt; do
     case $opt in
         r) BUILD_TYPE="RELEASE" ;;
         d) BUILD_TYPE="DEBUG"   ;;
         c) CHIP="$OPTARG"       ;;
+        C) CLEAN=1              ;;
         h) usage ;;
         :) echo "ERROR: -$OPTARG requires an argument." >&2; exit 1 ;;
        \?) echo "ERROR: Unknown flag -$OPTARG" >&2; exit 1 ;;
@@ -47,11 +50,8 @@ fi
 
 # shellcheck source=/dev/null
 source "$CHIP_CONF"
-# Expected variables from chip.conf:
-#   ARCH        e.g. X64
-#   TOOLCHAIN   e.g. GCC5
-#   DSC         e.g. OvmfPkg/OvmfPkgX64.dsc
-#   OUTPUT_DIR  e.g. Build/OvmfX64
+# Expected variables:
+#   ARCH, TOOLCHAIN, DSC, OUTPUT_DIR
 
 # ---------- sanity checks -----------------------------------------------------
 if [[ ! -f "$EDK2_DIR/edksetup.sh" ]]; then
@@ -65,16 +65,35 @@ echo "  Arch      : $ARCH"
 echo "  Toolchain : $TOOLCHAIN"
 echo "  DSC       : $DSC"
 echo "  Build     : $BUILD_TYPE"
+echo "  Clean     : $CLEAN"
 echo "============================================================"
 
-# ---------- build -------------------------------------------------------------
+# ---------- build setup -------------------------------------------------------
 cd "$EDK2_DIR"
+
+export EDK_TOOLS_PATH="$EDK2_DIR/BaseTools"
+export PACKAGES_PATH="$EDK2_DIR:$(dirname "$EDK2_DIR")"
 export PYTHON_COMMAND=python3
-# edksetup.sh uses unbound vars internally; suspend strict mode around it
+
 set +u
-source edksetup.sh --reconfig
+source "$EDK2_DIR/edksetup.sh" --reconfig
 set -u
 
+export WORKSPACE="$(dirname "$EDK2_DIR")"
+
+# ---------- clean -------------------------------------------------------------
+if [[ "$CLEAN" -eq 1 ]]; then
+    echo "🧹 Cleaning EDK2 build artifacts..."
+    rm -rf "$EDK2_DIR/Build"
+    rm -rf "$EDK2_DIR/Conf/.cache" 2>/dev/null || true
+    echo "✓ Clean complete"
+
+    echo "Exiting (clean-only mode)"
+    exit 0
+
+fi
+
+# ---------- build -------------------------------------------------------------
 build \
     -a "$ARCH" \
     -t "$TOOLCHAIN" \

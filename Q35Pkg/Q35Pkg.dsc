@@ -1,15 +1,29 @@
+## =============================================================================
+## Q35Pkg.dsc — Q35 platform description
+##
+## Strategy: include OvmfPkgX64.dsc in full, then append our own components.
+## OvmfPkgX64.dsc defines all library classes, PCDs, and base components.
+## We add our drivers in a second [Components] block after the include.
+## =============================================================================
+
 [Defines]
-  PLATFORM_NAME                  = Ovmf
-  PLATFORM_GUID                  = 5a9e7754-d81b-49ea-85ad-69eaa7b1539b
+  PLATFORM_NAME                  = Q35
+  PLATFORM_GUID                  = 7a1d5e2f-3b4c-4a8e-9f0d-1c2e3a4b5d6f
   PLATFORM_VERSION               = 0.1
   DSC_SPECIFICATION              = 0x00010005
   OUTPUT_DIRECTORY               = Build/OvmfX64
   SUPPORTED_ARCHITECTURES        = X64
   BUILD_TARGETS                  = NOOPT|DEBUG|RELEASE
   SKUID_IDENTIFIER               = DEFAULT
-  FLASH_DEFINITION               = Q35Pkg/Q35Pkg.fdf
+  FLASH_DEFINITION               = edk2/OvmfPkg/OvmfPkgX64.fdf
 
+# Pull in all of OVMF — library classes, PCDs, components, everything.
+# Our additions come after so they can use everything OVMF already defined.
+!include OvmfPkg/OvmfPkgX64.dsc
 
+## -----------------------------------------------------------------------------
+## Q35Pkg drivers — add new INFs here as you build them
+## -----------------------------------------------------------------------------
 [Components]
-  Drivers/Hello_World.inf #not created 
-  !include edk2/OvmfPkg/OvmfPkgX64.dsc
+  Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
+  #Q35Pkg/Drivers/TamperDetectDxe/TamperDetectDxe.inf

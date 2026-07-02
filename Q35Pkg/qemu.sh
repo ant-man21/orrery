@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EDK2_DIR="$(cd "$SCRIPT_DIR/../edk2" && pwd)"
+EDK2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---------- defaults ----------------------------------------------------------
 BUILD_TYPE="RELEASE"
