@@ -26,4 +26,5 @@
 ## -----------------------------------------------------------------------------
 [Components]
   Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
+  Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
   #Q35Pkg/Drivers/TamperDetectDxe/TamperDetectDxe.inf

@@ -36,11 +36,11 @@ HelloDxeEntry (
     EFI_STATUS  Status;
     // VOID        *Registration;
 
-    DEBUG((DEBUG_ERROR , "HelloDxeEntry start...\n"));
+    DEBUG((DEBUG_ERROR , "HelloDxeEntry 2 start...\n"));
     DEBUG((DEBUG_ERROR , "HELLO QUACKMEAT\n"));
     Status = EFI_SUCCESS;
     
-    DEBUG((DEBUG_INFO, "HelloDxeEntry end...\n"));
+    DEBUG((DEBUG_INFO, "HelloDxeEntry 2 end...\n"));
 
     return Status;
 }

@@ -83,14 +83,20 @@ export WORKSPACE="$(dirname "$EDK2_DIR")"
 
 # ---------- clean -------------------------------------------------------------
 if [[ "$CLEAN" -eq 1 ]]; then
-    echo "🧹 Cleaning EDK2 build artifacts..."
-    rm -rf "$EDK2_DIR/Build"
-    rm -rf "$EDK2_DIR/Conf/.cache" 2>/dev/null || true
-    echo "✓ Clean complete"
+    CLEAN_DIR="$WORKSPACE/$OUTPUT_DIR"
+
+    echo "🧹 Cleaning target build directory:"
+    echo "   $CLEAN_DIR"
+
+    if [[ -d "$CLEAN_DIR" ]]; then
+        rm -rf "$CLEAN_DIR"
+        echo "✓ Clean complete"
+    else
+        echo "Nothing to clean (directory does not exist)"
+    fi
 
     echo "Exiting (clean-only mode)"
     exit 0
-
 fi
 
 # ---------- build -------------------------------------------------------------

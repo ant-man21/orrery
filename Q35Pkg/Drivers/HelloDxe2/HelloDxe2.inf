@@ -1,0 +1,41 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = HelloDxe2
+  FILE_GUID                      = 1F4E98DC-1755-4FDD-B5D8-C85C737806A6
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 4.0
+  ENTRY_POINT                    = HelloDxeEntry
+
+#
+# The following information is for reference only and not required by the build tools.
+#
+#  VALID_ARCHITECTURES           = IA32 X64 EBC
+#
+
+[Sources]
+  HelloDxe2.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiRuntimeServicesTableLib
+  BaseMemoryLib
+  UefiBootServicesTableLib
+  MemoryAllocationLib
+  HobLib
+  UefiDriverEntryPoint
+  UefiLib
+  DebugLib
+  BaseLib
+  PcdLib
+
+[Guids]
+
+[Protocols]
+
+[Pcd]
+
+[Depex]
+  TRUE
