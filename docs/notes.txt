@@ -1,0 +1,107 @@
+Okay 2 months, 5-10hrs/week, everything on hand. That's tight but very doable if you stay focused. Here's the plan:
+
+---
+
+## 8 Week Game Plan
+
+**Week 1 — Build Tooling**
+Get the boring infrastructure done once and never think about it again.
+- `build.sh` wrapping edk2 for X64 and AARCH64 targets
+- `run_qemu_x86.sh` and `run_qemu_arm.sh` with correct flags
+- FAT image creation and update scripts (drop a .efi, relaunch QEMU)
+- Folder structure for your project src
+- Get it all on GitHub from day one
+
+Goal: one command builds, one command runs. Zero friction for the rest of the project.
+
+---
+
+**Week 2 — Snake Game**
+This isn't a throwaway week. You're learning the environment under low pressure.
+- `EFI_SIMPLE_TEXT_INPUT_PROTOCOL` for keys
+- `EFI_GRAPHICS_OUTPUT_PROTOCOL` for drawing pixels/rectangles
+- `gBS->CreateEvent` + `SetTimer` for game loop
+- Allocating and managing memory manually, no stdlib
+
+Don't gold plate it. Working snake with score display is enough. The point is getting comfortable before the hardware stuff starts.
+
+---
+
+**Week 3 — PCI Enumeration + SMBus Discovery**
+First real hardware touching week.
+- Write a UEFI shell app that walks PCI by class code
+- Find SMBus controller (class 0x0C subclass 0x05)
+- Read the IO BAR
+- Print what you found in a clean readable way
+- Test in QEMU, then run on your real x86 machine
+
+This is a satisfying milestone — you'll see real PCI devices on real hardware.
+
+---
+
+**Week 4 — SMBus Transaction Engine**
+The core of the whole project.
+- Implement byte read, byte write, word read against raw registers
+- HST_STS polling, timeout handling, error cases
+- Test against QEMU's emulated SPD EEPROM at address 0x50
+- Make it clean, make it reliable
+
+This is the week that will feel the most like EC work. Sit with the Intel PCH datasheet and the QEMU PIIX4 source side by side.
+
+---
+
+**Week 5 — SPD Parsing + Real Hardware**
+Make it actually useful.
+- Parse key SPD bytes — DDR type, size, speed, manufacturer, part number
+- Print it in a clean human readable format from the UEFI shell
+- Run it on your real old PC and read actual DIMM data
+- Compare output against what `decode-dimms` or CPU-Z would show on the same machine
+
+Real hardware validation is the moment this becomes a real project not a toy.
+
+---
+
+**Week 6 — Port to Raspberry Pi**
+Platform portability is what elevates this.
+- Study BCM2711/BCM2712 I2C controller registers (BSC)
+- Implement same transaction engine concept against BCM registers
+- Wire up your I2C component to Pi GPIO header
+- Read real data from a real sensor or EEPROM over UEFI on Pi
+
+You now have the same conceptual driver running on two completely different silicon families. That's the story.
+
+---
+
+**Week 7 — UEFI Protocol + Driver Model**
+This is where your existing skills make it shine.
+- Wrap your SMBus engine in a proper published protocol
+- Implement `EFI_SMBUS_HC_PROTOCOL` from MdePkg as your interface
+- Write a second small consumer app that uses the protocol rather than touching hardware directly
+- Shows you understand both levels
+
+---
+
+**Week 8 — Polish + Interview Prep**
+Don't skip this week.
+- Clean up code, consistent style, good comments
+- Write a solid README — what it is, why it matters, how to build and run
+- Record a short demo video running on real hardware (interviewers love this)
+- Prepare your talking points — what decisions you made and why
+
+---
+
+## The Interview Story
+
+By the end you can say:
+
+> "I built a UEFI SMBus driver from scratch — PCI enumeration to find the controller, raw register access for transactions, SPD EEPROM parsing for real DIMM data. Then ported the I2C engine to BCM2712 on Raspberry Pi to validate the same approach across different silicon. Wrapped it all in the UEFI driver model with a published protocol. Tested on QEMU, validated on real x86 hardware and on Pi."
+
+That hits EC skills, platform skills, and driver model skills in one sentence.
+
+---
+
+## One Practical Tip
+
+Keep a `DEVLOG.md` in your repo. One paragraph per session, what you did, what broke, what you learned. Interviewers who dig into your repo will read it and it proves the work is genuinely yours.
+
+Want me to scaffold the folder structure and starter shell scripts for week 1 now? 

@@ -1,0 +1,38 @@
+# After cloning edk2-stable
+git submodule update --init --recursive
+
+# Install build deps (Ubuntu/Debian)
+sudo apt install build-essential uuid-dev iasl git nasm python3-distutils
+
+# Setup build environment
+cd edk2
+source edksetup.sh
+
+# Build BaseTools
+make -C BaseTools
+
+# Build OVMF
+build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc
+
+Your output files will be at Build/OvmfX64/DEBUG_GCC5/FV/:
+
+OVMF.fd — combined flash image (easiest for QEMU)
+OVMF_CODE.fd + OVMF_VARS.fd — split code/vars (more realistic, persists NVRAM)
+
+# Simplest — single flash image
+qemu-system-x86_64 -drive if=pflash,format=raw,file=Build/OvmfX64/DEBUG_GCC5/FV/OVMF.fd
+
+# Better — split CODE (read-only) + VARS (read-write, persists across reboots)
+cp Build/OvmfX64/DEBUG_GCC/FV/OVMF_VARS.fd /tmp/my_vars.fd
+
+qemu-system-x86_64 \
+  -drive if=pflash,format=raw,readonly=on,file=Build/OvmfX64/DEBUG_GCC/FV/OVMF_CODE.fd \
+  -drive if=pflash,format=raw,file=/tmp/my_vars.fd \
+  -m 512M \
+  -serial stdio \
+  -net none
+
+Your Computer
+└── QEMU (pretends to be hardware)
+    └── OVMF (pretends to be the UEFI firmware)
+        └── Your OS or UEFI app
