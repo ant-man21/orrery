@@ -106,20 +106,27 @@ mkdir -p "$SHARED_DIR/data"
 
 rebuild_shared_img() {
     echo "→ Building shared.img (${SHARED_SIZE_MB} MB FAT32)..."
+
     # create blank image
     dd if=/dev/zero of="$SHARED_IMG" bs=1M count="$SHARED_SIZE_MB" status=none
+
     # format as FAT32 (mtools — no loop mount needed, no root required)
     if command -v mformat &>/dev/null; then
         mformat -i "$SHARED_IMG" -F -v SHARED ::
-        # copy host shared/ tree into the image
+
+        # copy entire shared tree into image
         if command -v mcopy &>/dev/null; then
-            mcopy -i "$SHARED_IMG" -s "$SHARED_DIR"/. ::
+            echo "  Copying $SHARED_DIR into shared.img..."
+            mcopy -i "$SHARED_IMG" -s "$SHARED_DIR"/* ::
+        else
+            echo "  mcopy not found — image will be empty"
         fi
     else
-        # fallback: mkfs.fat if mtools not installed (needs loop device = may need sudo)
         echo "  mtools not found — trying mkfs.fat (may need sudo)"
         mkfs.fat -F 32 -n SHARED "$SHARED_IMG"
+        echo "  WARNING: mkfs.fat only formats; it does not copy files"
     fi
+
     echo "→ shared.img ready"
 }
 

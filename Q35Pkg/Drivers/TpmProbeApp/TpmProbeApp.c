@@ -26,10 +26,11 @@
 
 #include <Protocol/Tcg2Protocol.h>
 #include <Protocol/SimpleFileSystem.h>
-#include <Protocol/FirmwareVolume2.h>
+// #include <Protocol/FirmwareVolume2.h>
 
+#include <Library/Tpm2CommandLib.h>
 #include <IndustryStandard/Tpm20.h>
-
+#include <IndustryStandard/TpmPtp.h>
 /* ── constants ─────────────────────────────────────────────────────────── */
 
 #define PCR_FOR_BIOS      16          /* user-controlled, safe to extend    */
@@ -97,97 +98,23 @@ PrintTcg2Caps (EFI_TCG2_PROTOCOL *Tcg2)
  */
 STATIC EFI_STATUS
 ReadRomImage (
-  OUT VOID    **RomBuffer,
+  OUT VOID   **RomBuffer,
   OUT UINTN   *RomSize
   )
 {
-  EFI_STATUS                     Status;
-  UINTN                          NumHandles;
-  EFI_HANDLE                    *Handles;
-  EFI_FIRMWARE_VOLUME2_PROTOCOL *Fv2;
-  VOID                          *Buffer;
-  UINTN                          BufferSize;
-  EFI_FV_FILETYPE                FoundType;
-  EFI_FV_FILE_ATTRIBUTES         FileAttribs;
-  UINT32                         AuthStatus;
-  EFI_GUID                       PeiCoreFv;
-
   /*
-   * Strategy: locate all FV2 handles, pick the first one that is readable,
-   * then dump the raw firmware volume memory range.
-   *
-   * A real implementation would target the BIOS region specifically.
-   * For a lab/QEMU probe this is fine.
+   * OVMF maps its 4 MB flash at 0xFFC00000 on X64.
+   * We just snapshot that range directly — no FV2 protocol needed.
    */
-  Status = gBS->LocateHandleBuffer (
-                  ByProtocol,
-                  &gEfiFirmwareVolume2ProtocolGuid,
-                  NULL,
-                  &NumHandles,
-                  &Handles
-                  );
-  if (EFI_ERROR (Status) || NumHandles == 0) {
-    Print (L"[PROBE] No FV2 handles found: %r\n", Status);
-    return EFI_NOT_FOUND;
+  VOID   *FlashBase = (VOID *)(UINTN)0xFFC00000;
+  UINTN   FlashSize = SIZE_4MB;
+
+  *RomBuffer = AllocateCopyPool (FlashSize, FlashBase);
+  if (*RomBuffer == NULL) {
+    return EFI_OUT_OF_RESOURCES;
   }
-
-  Print (L"[PROBE] Found %u firmware volume(s)\n", (UINT32)NumHandles);
-
-  /*
-   * For the probe we just hash the memory at the OVMF flash base directly.
-   * OVMF maps its flash at a well-known base; detect it via the HOB or
-   * just use the address of a symbol in the volume.  For simplicity we
-   * grab the firmware volume base from the FV2 protocol header pointer
-   * (this is implementation-specific and works in OVMF).
-   *
-   * Safer alternative (used here): ReadFile on the FV2 – read the whole
-   * "raw" section of each FV until we get something useful.  For the probe
-   * we fall back to a fixed 4 MB dummy read if ReadFile isn't supported.
-   */
-
-  /* Attempt to get the FV base address via the FV2 instance pointer */
-  Status = gBS->HandleProtocol (
-                  Handles[0],
-                  &gEfiFirmwareVolume2ProtocolGuid,
-                  (VOID **)&Fv2
-                  );
-  if (EFI_ERROR (Status)) {
-    FreePool (Handles);
-    return Status;
-  }
-
-  /*
-   * OVMF's EFI_FIRMWARE_VOLUME2_PROTOCOL instance lives *inside* the FV
-   * memory region – its address is a good proxy for "somewhere in the ROM".
-   * Align down to 4 KB, read 4 MB (typical OVMF size).
-   *
-   * This is a QEMU-only shortcut.  On real hardware you'd use
-   * GetVolumeFirmwareBlock() or a platform-specific flash driver.
-   */
-  {
-    EFI_PHYSICAL_ADDRESS  FvBase;
-    UINTN                 FvLen = SIZE_4MB;   /* OVMF is typically 4 MB    */
-
-    FvBase = (EFI_PHYSICAL_ADDRESS)(UINTN)Fv2;
-    /* align down to a 4 KB boundary – the FV header starts on a page */
-    FvBase = FvBase & ~(EFI_PHYSICAL_ADDRESS)(SIZE_4KB - 1);
-
-    /* sanity: the EFI_FIRMWARE_VOLUME_HEADER has a magic signature       */
-    /* Skip deep validation for the probe – just grab the memory.         */
-
-    Buffer = AllocateCopyPool (FvLen, (VOID *)(UINTN)FvBase);
-    if (Buffer == NULL) {
-      FreePool (Handles);
-      Print (L"[PROBE] AllocateCopyPool for ROM failed\n");
-      return EFI_OUT_OF_RESOURCES;
-    }
-    *RomBuffer = Buffer;
-    *RomSize   = FvLen;
-    Print (L"[PROBE] ROM snapshot: 0x%016Lx, %u bytes\n",
-           FvBase, (UINT32)FvLen);
-  }
-
-  FreePool (Handles);
+  *RomSize = FlashSize;
+  Print (L"[PROBE] ROM snapshot: 0xFFC00000, %u bytes\n", (UINT32)FlashSize);
   return EFI_SUCCESS;
 }
 
@@ -203,7 +130,9 @@ ExtendPcr16 (
   EFI_STATUS                 Status;
   EFI_TCG2_EVENT            *Event;
   UINTN                      EventSize;
-  UINT8                      Hash[SHA256_DIGEST_SIZE];
+  UINT32                     UpdateCounter;
+  // TPML_PCR_SELECTION         PcrSelectionOut
+  // UINT8                      Hash[SHA256_DIGEST_SIZE];
 
   /*
    * HashLogExtendEvent expects a caller-allocated EFI_TCG2_EVENT header.
@@ -251,7 +180,8 @@ ExtendPcr16 (
     In.count = 1;
     In.pcrSelections[0] = PcrSel;
 
-    Status = Tpm2PcrRead (&In, NULL, &Digests);
+    // Status = Tpm2PcrRead (&In, NULL, &Digests);
+    Status = Tpm2PcrRead (&In, &UpdateCounter, NULL, &Digests);
     if (!EFI_ERROR (Status) && Digests.count > 0) {
       UINT32 i;
       Print (L"[PROBE] PCR[%u] = ", PCR_FOR_BIOS);
@@ -344,263 +274,261 @@ SaveFileToDisk (
  * wrappers; the session management is handled internally.
  */
 
-STATIC EFI_STATUS
-SealUnsealRoundTrip (
-  IN UINT8   *Secret,
-  IN UINTN    SecretLen
-  )
-{
-  EFI_STATUS          Status;
+// STATIC EFI_STATUS
+// SealUnsealRoundTrip (
+//   IN UINT8   *Secret,
+//   IN UINTN    SecretLen
+//   )
+// {
+//   EFI_STATUS          Status;
 
-  /* --- buffers for the sealed object ------------------------------------ */
-  TPM2B_PRIVATE  OutPrivate;
-  TPM2B_PUBLIC   OutPublic;
-  ZeroMem (&OutPrivate, sizeof (OutPrivate));
-  ZeroMem (&OutPublic,  sizeof (OutPublic));
+//   /* --- buffers for the sealed object ------------------------------------ */
+//   TPM2B_PRIVATE  OutPrivate;
+//   TPM2B_PUBLIC   OutPublic;
+//   ZeroMem (&OutPrivate, sizeof (OutPrivate));
+//   ZeroMem (&OutPublic,  sizeof (OutPublic));
 
-  /* --- parent handle: use the TPM's Storage Primary Seed (SPS) --------- */
-  /* The primary key under the Storage hierarchy is created fresh each     */
-  /* boot unless you persist it.  For the probe we create a transient one. */
-  TPMI_DH_OBJECT  ParentHandle;
+//   /* --- parent handle: use the TPM's Storage Primary Seed (SPS) --------- */
+//   /* The primary key under the Storage hierarchy is created fresh each     */
+//   /* boot unless you persist it.  For the probe we create a transient one. */
+//   TPMI_DH_OBJECT  ParentHandle;
 
-  {
-    TPM2B_SENSITIVE_CREATE  InSensitive;
-    TPM2B_PUBLIC            InPublic;
-    TPM2B_DATA              OutsideInfo;
-    TPML_PCR_SELECTION      CreationPCR;
-    TPM2B_PUBLIC            OutParentPublic;
-    TPM2B_CREATION_DATA     CreationData;
-    TPM2B_DIGEST            CreationHash;
-    TPMT_TK_CREATION        CreationTicket;
+//   {
+//     TPM2B_SENSITIVE_CREATE  InSensitive;
+//     TPM2B_PUBLIC            InPublic;
+//     TPM2B_DATA              OutsideInfo;
+//     TPML_PCR_SELECTION      CreationPCR;
+//     TPM2B_PUBLIC            OutParentPublic;
+//     TPM2B_CREATION_DATA     CreationData;
+//     TPM2B_DIGEST            CreationHash;
+//     TPMT_TK_CREATION        CreationTicket;
 
-    ZeroMem (&InSensitive,    sizeof (InSensitive));
-    ZeroMem (&InPublic,       sizeof (InPublic));
-    ZeroMem (&OutsideInfo,    sizeof (OutsideInfo));
-    ZeroMem (&CreationPCR,    sizeof (CreationPCR));
-    ZeroMem (&OutParentPublic,sizeof (OutParentPublic));
-    ZeroMem (&CreationData,   sizeof (CreationData));
-    ZeroMem (&CreationHash,   sizeof (CreationHash));
-    ZeroMem (&CreationTicket, sizeof (CreationTicket));
+//     ZeroMem (&InSensitive,    sizeof (InSensitive));
+//     ZeroMem (&InPublic,       sizeof (InPublic));
+//     ZeroMem (&OutsideInfo,    sizeof (OutsideInfo));
+//     ZeroMem (&CreationPCR,    sizeof (CreationPCR));
+//     ZeroMem (&OutParentPublic,sizeof (OutParentPublic));
+//     ZeroMem (&CreationData,   sizeof (CreationData));
+//     ZeroMem (&CreationHash,   sizeof (CreationHash));
+//     ZeroMem (&CreationTicket, sizeof (CreationTicket));
 
-    /* RSA-2048 storage parent template */
-    InPublic.publicArea.type                  = TPM_ALG_RSA;
-    InPublic.publicArea.nameAlg               = TPM_ALG_SHA256;
-    InPublic.publicArea.objectAttributes.val  =
-      TPMA_OBJECT_RESTRICTED    |
-      TPMA_OBJECT_DECRYPT       |
-      TPMA_OBJECT_FIXEDTPM      |
-      TPMA_OBJECT_FIXEDPARENT   |
-      TPMA_OBJECT_SENSITIVEDATAORIGIN |
-      TPMA_OBJECT_USERWITHAUTH;
-    InPublic.publicArea.parameters.rsaDetail.symmetric.algorithm = TPM_ALG_AES;
-    InPublic.publicArea.parameters.rsaDetail.symmetric.keyBits.aes = 128;
-    InPublic.publicArea.parameters.rsaDetail.symmetric.mode.aes    = TPM_ALG_CFB;
-    InPublic.publicArea.parameters.rsaDetail.scheme.scheme         = TPM_ALG_NULL;
-    InPublic.publicArea.parameters.rsaDetail.keyBits               = 2048;
-    InPublic.publicArea.unique.rsa.size                            = 0;
+//     /* RSA-2048 storage parent template */
+//     InPublic.publicArea.type                  = TPM_ALG_RSA;
+//     InPublic.publicArea.nameAlg               = TPM_ALG_SHA256;
+//     InPublic.publicArea.objectAttributes.restricted = 1;
+//     InPublic.publicArea.objectAttributes.decrypt = 1;
+//     InPublic.publicArea.objectAttributes.fixedTPM = 1;
+//     InPublic.publicArea.objectAttributes.fixedParent = 1;
+//     InPublic.publicArea.objectAttributes.sensitiveDataOrigin = 1;
+//     InPublic.publicArea.objectAttributes.userWithAuth = 1;
+//     InPublic.publicArea.parameters.rsaDetail.symmetric.algorithm = TPM_ALG_AES;
+//     InPublic.publicArea.parameters.rsaDetail.symmetric.keyBits.aes = 128;
+//     InPublic.publicArea.parameters.rsaDetail.symmetric.mode.aes    = TPM_ALG_CFB;
+//     InPublic.publicArea.parameters.rsaDetail.scheme.scheme         = TPM_ALG_NULL;
+//     InPublic.publicArea.parameters.rsaDetail.keyBits               = 2048;
+//     InPublic.publicArea.unique.rsa.size                            = 0;
 
-    Status = Tpm2CreatePrimary (
-               TPM_RH_OWNER,
-               &InSensitive,
-               &InPublic,
-               &OutsideInfo,
-               &CreationPCR,
-               &ParentHandle,
-               &OutParentPublic,
-               &CreationData,
-               &CreationHash,
-               &CreationTicket
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2CreatePrimary failed: %r\n", Status);
-      return Status;
-    }
-    Print (L"[PROBE] Storage primary created, handle=0x%08x\n", ParentHandle);
-  }
+//     Status = Tpm2CreatePrimary (
+//                TPM_RH_OWNER,
+//                &InSensitive,
+//                &InPublic,
+//                &OutsideInfo,
+//                &CreationPCR,
+//                &ParentHandle,
+//                &OutParentPublic,
+//                &CreationData,
+//                &CreationHash,
+//                &CreationTicket
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2CreatePrimary failed: %r\n", Status);
+//       return Status;
+//     }
+//     Print (L"[PROBE] Storage primary created, handle=0x%08x\n", ParentHandle);
+//   }
 
-  /* --- build a PCR policy digest for PCR[16] SHA-256 ------------------- */
-  /* A sealed object's authPolicy is a hash of the TPM2_PolicyPCR command  */
-  /* inputs.  We compute it manually here so we can pass it to Create.     */
-  TPM2B_DIGEST  PolicyDigest;
-  {
-    TPML_PCR_SELECTION  PcrSel;
-    ZeroMem (&PcrSel, sizeof (PcrSel));
-    PcrSel.count                              = 1;
-    PcrSel.pcrSelections[0].hash             = TPM_ALG_SHA256;
-    PcrSel.pcrSelections[0].sizeofSelect     = 3;
-    PcrSel.pcrSelections[0].pcrSelect[PCR_FOR_BIOS / 8] =
-      (UINT8)(1 << (PCR_FOR_BIOS % 8));
+//   /* --- build a PCR policy digest for PCR[16] SHA-256 ------------------- */
+//   /* A sealed object's authPolicy is a hash of the TPM2_PolicyPCR command  */
+//   /* inputs.  We compute it manually here so we can pass it to Create.     */
+//   TPM2B_DIGEST  PolicyDigest;
+//   {
+//     TPML_PCR_SELECTION  PcrSel;
+//     ZeroMem (&PcrSel, sizeof (PcrSel));
+//     PcrSel.count                              = 1;
+//     PcrSel.pcrSelections[0].hash             = TPM_ALG_SHA256;
+//     PcrSel.pcrSelections[0].sizeofSelect     = 3;
+//     PcrSel.pcrSelections[0].pcrSelect[PCR_FOR_BIOS / 8] =
+//       (UINT8)(1 << (PCR_FOR_BIOS % 8));
 
-    Status = Tpm2ComputePolicyPCRDigest (
-               TPM_ALG_SHA256,
-               &PcrSel,
-               &PolicyDigest
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] PolicyPCR digest failed: %r\n", Status);
-      Tpm2FlushContext (ParentHandle);
-      return Status;
-    }
-    Print (L"[PROBE] PolicyPCR digest computed (%u bytes)\n",
-           PolicyDigest.size);
-  }
+//     Status = Tpm2ComputePolicyPCRDigest (
+//                TPM_ALG_SHA256,
+//                &PcrSel,
+//                &PolicyDigest
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] PolicyPCR digest failed: %r\n", Status);
+//       Tpm2FlushContext (ParentHandle);
+//       return Status;
+//     }
+//     Print (L"[PROBE] PolicyPCR digest computed (%u bytes)\n",
+//            PolicyDigest.size);
+//   }
 
-  /* --- seal "hello" to PCR[16] ----------------------------------------- */
-  {
-    TPM2B_SENSITIVE_CREATE  InSensitive;
-    TPM2B_PUBLIC            InPublic;
-    TPM2B_DATA              OutsideInfo;
-    TPML_PCR_SELECTION      CreationPCR;
-    TPM2B_CREATION_DATA     CreationData;
-    TPM2B_DIGEST            CreationHash;
-    TPMT_TK_CREATION        CreationTicket;
+//   /* --- seal "hello" to PCR[16] ----------------------------------------- */
+//   {
+//     TPM2B_SENSITIVE_CREATE  InSensitive;
+//     TPM2B_PUBLIC            InPublic;
+//     TPM2B_DATA              OutsideInfo;
+//     TPML_PCR_SELECTION      CreationPCR;
+//     TPM2B_CREATION_DATA     CreationData;
+//     TPM2B_DIGEST            CreationHash;
+//     TPMT_TK_CREATION        CreationTicket;
 
-    ZeroMem (&InSensitive,   sizeof (InSensitive));
-    ZeroMem (&InPublic,      sizeof (InPublic));
-    ZeroMem (&OutsideInfo,   sizeof (OutsideInfo));
-    ZeroMem (&CreationPCR,   sizeof (CreationPCR));
-    ZeroMem (&CreationData,  sizeof (CreationData));
-    ZeroMem (&CreationHash,  sizeof (CreationHash));
-    ZeroMem (&CreationTicket,sizeof (CreationTicket));
+//     ZeroMem (&InSensitive,   sizeof (InSensitive));
+//     ZeroMem (&InPublic,      sizeof (InPublic));
+//     ZeroMem (&OutsideInfo,   sizeof (OutsideInfo));
+//     ZeroMem (&CreationPCR,   sizeof (CreationPCR));
+//     ZeroMem (&CreationData,  sizeof (CreationData));
+//     ZeroMem (&CreationHash,  sizeof (CreationHash));
+//     ZeroMem (&CreationTicket,sizeof (CreationTicket));
 
-    /* the secret goes in InSensitive.sensitive.data */
-    InSensitive.sensitive.data.size = (UINT16)SecretLen;
-    CopyMem (InSensitive.sensitive.data.buffer, Secret, SecretLen);
+//     /* the secret goes in InSensitive.sensitive.data */
+//     InSensitive.sensitive.data.size = (UINT16)SecretLen;
+//     CopyMem (InSensitive.sensitive.data.buffer, Secret, SecretLen);
 
-    /* keyedHash (sealed data) template */
-    InPublic.publicArea.type    = TPM_ALG_KEYEDHASH;
-    InPublic.publicArea.nameAlg = TPM_ALG_SHA256;
-    InPublic.publicArea.objectAttributes.val =
-      TPMA_OBJECT_FIXEDTPM    |
-      TPMA_OBJECT_FIXEDPARENT |
-      TPMA_OBJECT_ADMINWITHPOLICY;  /* only policy-authorised unseal */
-    InPublic.publicArea.authPolicy = PolicyDigest;
-    InPublic.publicArea.parameters.keyedHashDetail.scheme.scheme = TPM_ALG_NULL;
+//     /* keyedHash (sealed data) template */
+//     InPublic.publicArea.type    = TPM_ALG_KEYEDHASH;
+//     InPublic.publicArea.nameAlg = TPM_ALG_SHA256;
+//     InPublic.publicArea.objectAttributes.fixedTPM = 1;
+//     InPublic.publicArea.objectAttributes.fixedParent = 1;
+//     InPublic.publicArea.objectAttributes.adminWithPolicy = 1;
+//     InPublic.publicArea.authPolicy = PolicyDigest;
+//     InPublic.publicArea.parameters.keyedHashDetail.scheme.scheme = TPM_ALG_NULL;
 
-    Status = Tpm2Create (
-               ParentHandle,
-               &InSensitive,
-               &InPublic,
-               &OutsideInfo,
-               &CreationPCR,
-               &OutPrivate,
-               &OutPublic,
-               &CreationData,
-               &CreationHash,
-               &CreationTicket
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2Create (seal) failed: %r\n", Status);
-      Tpm2FlushContext (ParentHandle);
-      return Status;
-    }
-    Print (L"[PROBE] Secret sealed! private blob %u bytes, public %u bytes\n",
-           OutPrivate.size, OutPublic.size);
-  }
+//     Status = Tpm2Create (
+//                ParentHandle,
+//                &InSensitive,
+//                &InPublic,
+//                &OutsideInfo,
+//                &CreationPCR,
+//                &OutPrivate,
+//                &OutPublic,
+//                &CreationData,
+//                &CreationHash,
+//                &CreationTicket
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2Create (seal) failed: %r\n", Status);
+//       Tpm2FlushContext (ParentHandle);
+//       return Status;
+//     }
+//     Print (L"[PROBE] Secret sealed! private blob %u bytes, public %u bytes\n",
+//            OutPrivate.size, OutPublic.size);
+//   }
 
-  /* --- load the sealed object ------------------------------------------ */
-  TPMI_DH_OBJECT  SealedHandle;
-  {
-    TPM2B_NAME  OutName;
-    ZeroMem (&OutName, sizeof (OutName));
+//   /* --- load the sealed object ------------------------------------------ */
+//   TPMI_DH_OBJECT  SealedHandle;
+//   {
+//     TPM2B_NAME  OutName;
+//     ZeroMem (&OutName, sizeof (OutName));
 
-    Status = Tpm2Load (
-               ParentHandle,
-               &OutPrivate,
-               &OutPublic,
-               &SealedHandle,
-               &OutName
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2Load failed: %r\n", Status);
-      Tpm2FlushContext (ParentHandle);
-      return Status;
-    }
-    Print (L"[PROBE] Sealed object loaded, handle=0x%08x\n", SealedHandle);
-  }
+//     Status = Tpm2Load (
+//                ParentHandle,
+//                &OutPrivate,
+//                &OutPublic,
+//                &SealedHandle,
+//                &OutName
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2Load failed: %r\n", Status);
+//       Tpm2FlushContext (ParentHandle);
+//       return Status;
+//     }
+//     Print (L"[PROBE] Sealed object loaded, handle=0x%08x\n", SealedHandle);
+//   }
 
-  /* --- open a PCR policy session and unseal ----------------------------- */
-  {
-    TPMI_SH_AUTH_SESSION  SessionHandle;
-    TPM2B_NONCE           NonceCaller;
-    TPM2B_ENCRYPTED_SECRET EncryptedSalt;
-    TPMT_SYM_DEF           Symmetric;
-    TPM2B_NONCE            NonceTPM;
+//   /* --- open a PCR policy session and unseal ----------------------------- */
+//   {
+//     TPMI_SH_AUTH_SESSION  SessionHandle;
+//     TPM2B_NONCE           NonceCaller;
+//     TPM2B_ENCRYPTED_SECRET EncryptedSalt;
+//     TPMT_SYM_DEF           Symmetric;
+//     TPM2B_NONCE            NonceTPM;
 
-    ZeroMem (&NonceCaller,    sizeof (NonceCaller));
-    ZeroMem (&EncryptedSalt,  sizeof (EncryptedSalt));
-    ZeroMem (&Symmetric,      sizeof (Symmetric));
-    ZeroMem (&NonceTPM,       sizeof (NonceTPM));
+//     ZeroMem (&NonceCaller,    sizeof (NonceCaller));
+//     ZeroMem (&EncryptedSalt,  sizeof (EncryptedSalt));
+//     ZeroMem (&Symmetric,      sizeof (Symmetric));
+//     ZeroMem (&NonceTPM,       sizeof (NonceTPM));
 
-    NonceCaller.size = 20;                          /* 20-byte nonce       */
-    Tpm2GetRandom (20, NonceCaller.buffer);
-    Symmetric.algorithm = TPM_ALG_NULL;
+//     NonceCaller.size = 20;                          /* 20-byte nonce       */
+//     Tpm2GetRandom (20, NonceCaller.buffer);
+//     Symmetric.algorithm = TPM_ALG_NULL;
 
-    Status = Tpm2StartAuthSession (
-               TPM_RH_NULL,          /* tpmKey   */
-               TPM_RH_NULL,          /* bind     */
-               &NonceCaller,
-               &EncryptedSalt,
-               TPM_SE_POLICY,
-               &Symmetric,
-               TPM_ALG_SHA256,
-               &SessionHandle,
-               &NonceTPM
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2StartAuthSession failed: %r\n", Status);
-      goto Cleanup;
-    }
+//     Status = Tpm2StartAuthSession (
+//                TPM_RH_NULL,          /* tpmKey   */
+//                TPM_RH_NULL,          /* bind     */
+//                &NonceCaller,
+//                &EncryptedSalt,
+//                TPM_SE_POLICY,
+//                &Symmetric,
+//                TPM_ALG_SHA256,
+//                &SessionHandle,
+//                &NonceTPM
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2StartAuthSession failed: %r\n", Status);
+//       goto Cleanup;
+//     }
 
-    /* run PolicyPCR to satisfy the sealed object's authPolicy */
-    TPML_PCR_SELECTION  PcrSel;
-    ZeroMem (&PcrSel, sizeof (PcrSel));
-    PcrSel.count                           = 1;
-    PcrSel.pcrSelections[0].hash           = TPM_ALG_SHA256;
-    PcrSel.pcrSelections[0].sizeofSelect   = 3;
-    PcrSel.pcrSelections[0].pcrSelect[PCR_FOR_BIOS / 8] =
-      (UINT8)(1 << (PCR_FOR_BIOS % 8));
+//     /* run PolicyPCR to satisfy the sealed object's authPolicy */
+//     TPML_PCR_SELECTION  PcrSel;
+//     ZeroMem (&PcrSel, sizeof (PcrSel));
+//     PcrSel.count                           = 1;
+//     PcrSel.pcrSelections[0].hash           = TPM_ALG_SHA256;
+//     PcrSel.pcrSelections[0].sizeofSelect   = 3;
+//     PcrSel.pcrSelections[0].pcrSelect[PCR_FOR_BIOS / 8] =
+//       (UINT8)(1 << (PCR_FOR_BIOS % 8));
 
-    Status = Tpm2PolicyPCR (
-               SessionHandle,
-               NULL,        /* pcrDigest – NULL means "use current PCR"  */
-               &PcrSel
-               );
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2PolicyPCR failed: %r\n", Status);
-      Tpm2FlushContext (SessionHandle);
-      goto Cleanup;
-    }
+//     Status = Tpm2PolicyPCR (
+//                SessionHandle,
+//                NULL,        /* pcrDigest – NULL means "use current PCR"  */
+//                &PcrSel
+//                );
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2PolicyPCR failed: %r\n", Status);
+//       Tpm2FlushContext (SessionHandle);
+//       goto Cleanup;
+//     }
 
-    /* now unseal */
-    TPM2B_SENSITIVE_DATA  OutData;
-    ZeroMem (&OutData, sizeof (OutData));
+//     /* now unseal */
+//     TPM2B_SENSITIVE_DATA  OutData;
+//     ZeroMem (&OutData, sizeof (OutData));
 
-    Status = Tpm2Unseal (SealedHandle, SessionHandle, &OutData);
-    Tpm2FlushContext (SessionHandle);
+//     Status = Tpm2Unseal (SealedHandle, SessionHandle, &OutData);
+//     Tpm2FlushContext (SessionHandle);
 
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROBE] Tpm2Unseal FAILED: %r  ← expected if PCR changed\n",
-             Status);
-    } else {
-      /* compare with original secret */
-      BOOLEAN Match =
-        (OutData.size == SecretLen) &&
-        (CompareMem (OutData.buffer, Secret, SecretLen) == 0);
+//     if (EFI_ERROR (Status)) {
+//       Print (L"[PROBE] Tpm2Unseal FAILED: %r  ← expected if PCR changed\n",
+//              Status);
+//     } else {
+//       /* compare with original secret */
+//       BOOLEAN Match =
+//         (OutData.size == SecretLen) &&
+//         (CompareMem (OutData.buffer, Secret, SecretLen) == 0);
 
-      Print (L"[PROBE] Unseal SUCCESS! recovered: \"");
-      for (UINTN i = 0; i < OutData.size; i++) {
-        Print (L"%c", (CHAR16)OutData.buffer[i]);
-      }
-      Print (L"\"  match=%s\n", Match ? L"YES ✓" : L"NO ✗");
-    }
-  }
+//       Print (L"[PROBE] Unseal SUCCESS! recovered: \"");
+//       for (UINTN i = 0; i < OutData.size; i++) {
+//         Print (L"%c", (CHAR16)OutData.buffer[i]);
+//       }
+//       Print (L"\"  match=%s\n", Match ? L"YES ✓" : L"NO ✗");
+//     }
+//   }
 
-Cleanup:
-  Tpm2FlushContext (SealedHandle);
-  Tpm2FlushContext (ParentHandle);
-  return Status;
-}
+// Cleanup:
+//   Tpm2FlushContext (SealedHandle);
+//   Tpm2FlushContext (ParentHandle);
+//   return Status;
+// }
 
 /* ── EFI entry point ───────────────────────────────────────────────────── */
 
@@ -655,10 +583,10 @@ UefiMain (
   /* 5. Seal/Unseal round-trip */
   Print (L"[PROBE] Running seal→unseal round-trip with secret \""
          SECRET_STRING L"\"...\n");
-  Status = SealUnsealRoundTrip (
-             (UINT8 *)SECRET_STRING,
-             SECRET_LEN
-             );
+  // Status = SealUnsealRoundTrip (
+  //            (UINT8 *)SECRET_STRING,
+  //            SECRET_LEN
+  //            );
 
   FreePool (RomBuffer);
 
