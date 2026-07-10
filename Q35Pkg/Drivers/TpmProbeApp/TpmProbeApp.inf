@@ -42,7 +42,8 @@
   Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2Create, Tpm2Load, Tpm2Unseal …
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
-
+  DebugLib
+  
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
   gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd)

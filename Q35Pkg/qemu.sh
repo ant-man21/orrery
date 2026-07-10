@@ -130,6 +130,8 @@ rebuild_shared_img() {
     echo "→ shared.img ready"
 }
 
+# rebuild shell image
+
 if [[ "$RESET_SHARED" -eq 1 || ! -f "$SHARED_IMG" ]]; then
     rebuild_shared_img
 fi

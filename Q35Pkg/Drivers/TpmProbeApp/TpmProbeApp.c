@@ -23,6 +23,7 @@
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
 #include <Library/PrintLib.h>
+#include <Library/DebugLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
 #include <Protocol/SimpleFileSystem.h>
@@ -121,7 +122,7 @@ ReadRomImage (
 /* ── helper: extend PCR[16] with arbitrary data ─────────────────────────── */
 
 STATIC EFI_STATUS
-ExtendPcr16 (
+ExtendPcr16 ( //something fails here. we get assert
   IN EFI_TCG2_PROTOCOL  *Tcg2,
   IN VOID               *Data,
   IN UINTN               DataSize
@@ -150,6 +151,7 @@ ExtendPcr16 (
   Event->Header.PCRIndex              = PCR_FOR_BIOS;
   Event->Header.EventType             = EV_POST_CODE;
   CopyMem (Event->Event, "BIOS ROM", sizeof ("BIOS ROM") - 1);
+  DEBUG ((DEBUG_INFO, "ExtendPcr16 [1]\n"));
 
   Status = Tcg2->HashLogExtendEvent (
                    Tcg2,
@@ -159,6 +161,7 @@ ExtendPcr16 (
                    Event
                    );
   FreePool (Event);
+  DEBUG ((DEBUG_INFO, "ExtendPcr16 [2]\n"));
 
   if (EFI_ERROR (Status)) {
     Print (L"[PROBE] HashLogExtendEvent failed: %r\n", Status);
@@ -169,19 +172,21 @@ ExtendPcr16 (
   {
     TPML_DIGEST  Digests;
     TPMS_PCR_SELECTION PcrSel;
-
+    
     ZeroMem (&PcrSel, sizeof (PcrSel));
     PcrSel.hash = TPM_ALG_SHA256;
     PcrSel.sizeofSelect = 3;
     PcrSel.pcrSelect[PCR_FOR_BIOS / 8] = (UINT8)(1 << (PCR_FOR_BIOS % 8));
-
+    
     TPML_PCR_SELECTION In;
     ZeroMem (&In, sizeof (In));
     In.count = 1;
     In.pcrSelections[0] = PcrSel;
+    DEBUG ((DEBUG_INFO, "ExtendPcr16 [3]\n"));
 
     // Status = Tpm2PcrRead (&In, NULL, &Digests);
     Status = Tpm2PcrRead (&In, &UpdateCounter, NULL, &Digests);
+    DEBUG ((DEBUG_INFO, "ExtendPcr16 [4]\n"));
     if (!EFI_ERROR (Status) && Digests.count > 0) {
       UINT32 i;
       Print (L"[PROBE] PCR[%u] = ", PCR_FOR_BIOS);
@@ -545,7 +550,7 @@ UefiMain (
   UINTN               RomSize   = 0;
 
   Print (L"\n=== TpmProbeApp ===\n\n");
-
+  DEBUG((DEBUG_INFO,"TpmProbeApp start...\n")); //why do I not get this debug...
   /* 1. Find TCG2 and print caps */
   Tcg2 = FindTcg2Protocol ();
   if (Tcg2 == NULL) {

@@ -117,7 +117,8 @@ build \
     -t "$TOOLCHAIN" \
     -b "$BUILD_TYPE" \
     -p "$DSC" \
-    -n "$(nproc)"
+    -n "$(nproc)" \
+    -D TPM2_ENABLE=TRUE
 
 echo ""
 echo "✓ Build complete → $EDK2_DIR/$OUTPUT_DIR/${BUILD_TYPE}_${TOOLCHAIN}/FV/"
