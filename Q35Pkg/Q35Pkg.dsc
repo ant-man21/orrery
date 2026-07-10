@@ -27,4 +27,9 @@
 [Components]
   Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
   Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
-  #Q35Pkg/Drivers/TamperDetectDxe/TamperDetectDxe.inf
+  Q35Pkg/Drivers/TpmProbeApp/TpmProbeApp.inf {
+    <LibraryClasses>
+      Tpm2CommandLib|SecurityPkg/Library/Tpm2CommandLib/Tpm2CommandLib.inf
+      Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
+      TpmMeasurementLib|SecurityPkg/Library/DxeTpmMeasurementLib/DxeTpmMeasurementLib.inf
+  }
