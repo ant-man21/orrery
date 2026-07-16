@@ -1,29 +1,31 @@
-## TpmProbeApp.inf
+## TpmProvisionApp.inf
 ##
-## UEFI Application – TPM PCR probe and seal/unseal round-trip
+## UEFI Application – "Setup First Boot" provisioning flow:
+##   1. Init TPM / locate TCG2 protocol
+##   2. Boot (unsigned for now)
+##   3. Measure ROM -> extend PCR[16]
+##   4. Create secret
+##   5. Seal secret to PCR[16]
+##   6. Store sealed blob on disk (fs1:\data\)
 ##
-## Drop this (and TpmProbeApp.c) into your custom package, e.g.:
-##   MyPkg/Application/TpmProbeApp/
-## Add to MyPkg.dsc under [Components]:
-##   MyPkg/Application/TpmProbeApp/TpmProbeApp.inf
+## Companion app: TpmVerifyBootApp (reboot / unseal / tamper-detect flow).
 ##
-## Build:
-##   build -p MyPkg/MyPkg.dsc -m MyPkg/Application/TpmProbeApp/TpmProbeApp.inf \
-##         -a X64 -t GCC5
+## Add to Q35Pkg.dsc under [Components]:
+##   Q35Pkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
 ##
-## Output: Build/<DSC>/<TARGET>_<TOOLCHAIN>/X64/TpmProbeApp.efi
-## Copy to your QEMU virtual disk (fs0:) and run from the UEFI shell.
+## Output: Build/<DSC>/<TARGET>_<TOOLCHAIN>/X64/TpmProvisionApp.efi
+## Run from the UEFI shell as fs1:\apps\TpmProvisionApp.efi
 
 [Defines]
   INF_VERSION     = 0x00010005
-  BASE_NAME       = TpmProbeApp
-  FILE_GUID       = a1b2c3d4-e5f6-7890-abcd-ef1234567890
+  BASE_NAME       = TpmProvisionApp
+  FILE_GUID       = 0773106d-320c-498d-992e-6a2253ff8c41
   MODULE_TYPE     = UEFI_APPLICATION
   VERSION_STRING  = 1.0
   ENTRY_POINT     = UefiMain
 
 [Sources]
-  TpmProbeApp.c
+  TpmProvisionApp.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -36,6 +38,7 @@
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
   UefiRuntimeServicesTableLib     ## gRT (for later phases)
+  BaseLib                         ## StrCmp (match fs1: by volume label)
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
@@ -43,14 +46,15 @@
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   DebugLib
-  
+
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
-  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd)
+  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd / sealed blob)
   gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (read ROM image)
 
 [Guids]
   gEfiTpmDeviceInstanceTpm20DtpmGuid     ## for TPM device selection
+  gEfiFileSystemInfoGuid                 ## identify fs1: (SHARED) by volume label
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

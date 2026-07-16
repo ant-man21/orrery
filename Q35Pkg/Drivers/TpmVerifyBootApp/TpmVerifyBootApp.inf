@@ -1,0 +1,47 @@
+## TpmVerifyBootApp.inf
+##
+## UEFI Application – "Reboot / No Update" verification flow (stub):
+##   1. Measure ROM -> extend PCR[16]
+##   2. Load sealed blob from disk (fs1:\data\)
+##   3. Unseal (TPM checks PCR[16] + integrity)
+##   4. If success -> boot continues
+##   5. If fail -> halt (BIOS modified!)
+##
+## Currently a skeleton — each step is a TODO placeholder pending
+## TpmProvisionApp's seal step landing.
+##
+## Companion app: TpmProvisionApp (first-boot provisioning flow).
+##
+## Add to Q35Pkg.dsc under [Components]:
+##   Q35Pkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf
+##
+## Output: Build/<DSC>/<TARGET>_<TOOLCHAIN>/X64/TpmVerifyBootApp.efi
+## Run from the UEFI shell as fs1:\apps\TpmVerifyBootApp.efi
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = TpmVerifyBootApp
+  FILE_GUID       = 3eb5fc99-051f-47e3-b3a5-c6db0c2d342e
+  MODULE_TYPE     = UEFI_APPLICATION
+  VERSION_STRING  = 1.0
+  ENTRY_POINT     = UefiMain
+
+[Sources]
+  TpmVerifyBootApp.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint       ## provides UefiMain linkage
+  UefiLib                         ## Print, etc.
+  UefiBootServicesTableLib        ## gBS
+  DebugLib
+
+[Protocols]
+  gEfiTcg2ProtocolGuid                   ## CONSUMES  (wired up once steps are implemented)
+
+[BuildOptions]
+  ## Suppress "C99 declaration after statement" warnings that trip up
+  ## some GCC builds when mixing C99-isms with UEFI coding style.
+  GCC:*_*_*_CC_FLAGS = -std=c11 -Wno-error=declaration-after-statement

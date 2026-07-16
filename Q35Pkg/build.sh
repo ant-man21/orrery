@@ -7,18 +7,21 @@
 #   -d          Debug build
 #   -c CHIP     Chip target           (default: q35)
 #   -C          Clean before build
-#   -s          Sync .efi outputs → shared/apps/ after build  (default: on)
+#   -s          Sync .efi outputs → shared/apps/ + shared.img after build  (default: on)
 #   -S          Skip sync
 #   -h          Show this help
 #
 # Chip configs live in:  chips/<CHIP>/chip.conf
 #
 # Post-build sync:
-#   Any .efi files produced under Build/.../X64/ that are NOT OVMF firmware
-#   blobs (OVMF_CODE, OVMF_VARS, OVMF.fd) are copied to:
-#     Q35Pkg/shared/apps/
+#   .efi files named in shared/.sync are copied to Q35Pkg/shared/apps/, then
+#   pushed into shared.img *in place* (mcopy -o) so they show up on fs1: on
+#   the next run without needing qemu.sh --reset-shared — which wipes and
+#   rebuilds the whole image from shared/, destroying anything the VM wrote
+#   there (dummy.fd, sealed blobs, etc). shared.img is only fully (re)created
+#   here if it doesn't exist yet.
 #   From the UEFI shell those are visible as:
-#     fs1:\apps\TpmProbeApp.efi   (etc.)
+#     fs1:\apps\TpmProvisionApp.efi   (etc.)
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -153,5 +156,27 @@ if [[ "$SYNC" -eq 1 ]]; then
                 echo "  ✗ $name  (not found in build output — built yet?)"
             fi
         done
+    fi
+
+    # ---------- push into shared.img in place --------------------------------
+    SHARED_IMG="$SCRIPT_DIR/shared.img"
+    SHARED_SIZE_MB=256
+    mkdir -p "$SCRIPT_DIR/shared/data"
+
+    if [[ ! -f "$SHARED_IMG" ]]; then
+        echo "→ shared.img not found — creating fresh (${SHARED_SIZE_MB} MB FAT32)..."
+        dd if=/dev/zero of="$SHARED_IMG" bs=1M count="$SHARED_SIZE_MB" status=none
+        mformat -i "$SHARED_IMG" -F -v SHARED ::
+        mcopy -i "$SHARED_IMG" -s "$SCRIPT_DIR/shared"/* ::
+        echo "✓ shared.img created → $SHARED_IMG"
+    else
+        shopt -s nullglob
+        apps=("$APPS_DIR"/*)
+        shopt -u nullglob
+        if [[ ${#apps[@]} -gt 0 ]]; then
+            echo "→ Pushing into shared.img (existing files preserved)..."
+            mcopy -o -i "$SHARED_IMG" "${apps[@]}" ::apps/
+            echo "✓ shared.img updated → $SHARED_IMG"
+        fi
     fi
 fi
