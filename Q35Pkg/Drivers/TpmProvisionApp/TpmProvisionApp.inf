@@ -32,6 +32,7 @@
   MdeModulePkg/MdeModulePkg.dec
   SecurityPkg/SecurityPkg.dec
   CryptoPkg/CryptoPkg.dec
+  Q35Pkg/Q35Pkg.dec
 
 [LibraryClasses]
   UefiApplicationEntryPoint       ## provides UefiMain linkage
@@ -42,7 +43,8 @@
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
-  Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2Create, Tpm2Load, Tpm2Unseal …
+  Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite …
+  Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (Q35Pkg-local — see its header)
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   DebugLib
