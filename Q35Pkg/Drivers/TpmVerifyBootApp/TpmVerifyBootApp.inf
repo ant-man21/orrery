@@ -31,15 +31,34 @@
 
 [Packages]
   MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  SecurityPkg/SecurityPkg.dec
+  CryptoPkg/CryptoPkg.dec
+  Q35Pkg/Q35Pkg.dec
 
 [LibraryClasses]
   UefiApplicationEntryPoint       ## provides UefiMain linkage
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
+  UefiRuntimeServicesTableLib     ## gRT (for later phases)
+  BaseLib                         ## StrCmp (match fs1: by volume label)
+  BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
+  MemoryAllocationLib             ## AllocateZeroPool, FreePool
+  PrintLib                        ## SPrint
+  Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite …
+  Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (Q35Pkg-local — see its header)
+  Tpm2DeviceLib                   ## low-level TPM device abstraction
+  BaseCryptLib                    ## Sha256HashAll (used in later phases)
   DebugLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES  (wired up once steps are implemented)
+  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd / sealed blob)
+  gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (read ROM image)
+  gEfiShellParametersProtocolGuid
+
+[Guids]
+  gEfiFileSystemInfoGuid 
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

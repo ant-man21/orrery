@@ -32,8 +32,6 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseCryptLib.h>
-#include <Library/Tpm2CommandLib.h>
-#include <Library/Tpm2DeviceLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
 
@@ -42,6 +40,7 @@
 #include <Guid/FileSystemInfo.h>
 
 #include <Library/Tpm2CommandLib.h>
+#include <Library/Tpm2DeviceLib.h>
 #include <Library/Tpm2PolicyPcrLib.h>
 #include <IndustryStandard/Tpm20.h>
 #include <IndustryStandard/TpmPtp.h>
@@ -85,7 +84,7 @@ ReadRomImage (
    * OVMF maps its 4 MB flash at 0xFFC00000 on X64.
    * We just snapshot that range directly — no FV2 protocol needed.
    */
-  VOID   *FlashBase = (VOID *)(UINTN)0xFFC00000;
+  VOID   *FlashBase = (VOID *)(UINTN)0xFFC00000; // TODO for real hardware, use FV2 protocol to locate the flash volume instead of hardcoding this address
   UINTN   FlashSize = SIZE_4MB;
 
   *RomBuffer = AllocateCopyPool (FlashSize, FlashBase);
@@ -539,20 +538,6 @@ UefiMain (
   }
   Print (L"\n");
 
-  /*
-   * Dev/test aid, not one of the 7 provisioning steps: snapshot the ROM
-   * we just measured to fs1:\data\dummy.fd. TpmVerifyBootApp can re-hash
-   * this "golden" copy on demand to simulate "the original ROM" without
-   * needing a second physical firmware build.
-   */
-  Print (L"[PROVISION] Saving ROM snapshot to fs1:" DUMMY_FD_PATH L"...\n");
-  Status = SaveFileToDisk (DUMMY_FD_PATH, RomBuffer, RomSize);
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Warning: could not save dummy.fd (%r) – continuing\n",
-           Status);
-  }
-  Print (L"\n");
-
   /* Steps 4-6: compute PCR[16] policy, define NV index, write secret into it */
   Print (L"[PROVISION] Sealing secret \"" SECRET_STRING L"\" to PCR[%u] via NV index 0x%x...\n",
          PCR_FOR_BIOS, SECRET_NV_INDEX);
@@ -575,9 +560,28 @@ UefiMain (
     return Status;
   }
 
-  Status = WriteSecretToNvIndex ((UINT8 *)SECRET_STRING, SECRET_LEN);
+  Status = WriteSecretToNvIndex ((UINT8 *)SECRET_STRING, SECRET_LEN); //TODO make this not hardcoded
   if (EFI_ERROR (Status)) {
+    FreePool (RomBuffer);
     return Status;
+  }
+
+  /*
+   * Dev/test aid, not one of the 7 provisioning steps: snapshot the ROM
+   * we just sealed against to fs1:\data\dummy.fd. TpmVerifyBootApp can
+   * re-hash this "golden" copy on demand to simulate "the original ROM"
+   * without needing a second physical firmware build.
+   *
+   * Only saved once the seal above actually succeeds — if the NV index
+   * already existed under an older policy and this write failed, we must
+   * NOT overwrite dummy.fd, or the golden reference would drift out of
+   * sync with the policy that's actually still enforced.
+   */
+  Print (L"\n[PROVISION] Saving ROM snapshot to fs1:" DUMMY_FD_PATH L"...\n");
+  Status = SaveFileToDisk (DUMMY_FD_PATH, RomBuffer, RomSize);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Warning: could not save dummy.fd (%r) – continuing\n",
+           Status);
   }
 
   FreePool (RomBuffer);
