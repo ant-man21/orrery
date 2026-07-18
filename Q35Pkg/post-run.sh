@@ -24,7 +24,7 @@ fi
 mkdir -p "$DATA_DIR"
 
 echo "→ Pulling fs1:\\data\\ from shared.img into $DATA_DIR ..."
-if ! mcopy -o -i "$SHARED_IMG" -s ::data/* "$DATA_DIR" 2>/dev/null; then
+if ! mcopy -o -n -i "$SHARED_IMG" -s ::data/* "$DATA_DIR" 2>/dev/null; then
     echo "  (::data/ is empty — nothing to pull)"
     exit 0
 fi
