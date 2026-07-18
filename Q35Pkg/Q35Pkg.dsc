@@ -21,17 +21,15 @@
 # Our additions come after so they can use everything OVMF already defined.
 !include OvmfPkg/OvmfPkgX64.dsc
 
+[LibraryClasses.common.UEFI_APPLICATION]
+  Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
+  Tpm2PolicyPcrLib|Q35Pkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
+
 ## -----------------------------------------------------------------------------
 ## Q35Pkg drivers — add new INFs here as you build them
 ## -----------------------------------------------------------------------------
 [Components]
   Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
   Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
-  Q35Pkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf {
-    <LibraryClasses>
-      Tpm2CommandLib|SecurityPkg/Library/Tpm2CommandLib/Tpm2CommandLib.inf
-      Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
-      TpmMeasurementLib|SecurityPkg/Library/DxeTpmMeasurementLib/DxeTpmMeasurementLib.inf
-      BaseCryptLib|CryptoPkg/Library/BaseCryptLib/BaseCryptLib.inf
-  }
+  Q35Pkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
   Q35Pkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf

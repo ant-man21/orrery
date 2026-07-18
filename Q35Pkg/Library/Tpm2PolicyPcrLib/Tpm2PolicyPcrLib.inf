@@ -1,0 +1,30 @@
+## @file
+#  Provides Tpm2PolicyPCR — the one TPM2 command SecurityPkg's Tpm2CommandLib
+#  doesn't wrap. See Include/Library/Tpm2PolicyPcrLib.h for why.
+#
+# Copyright (c) 2013 - 2018, Intel Corporation. All rights reserved.<BR>
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = Tpm2PolicyPcrLib
+  FILE_GUID                      = 8f3c2a1d-6e4b-4a9f-b1c8-3d5e7f9a0b2c
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = Tpm2PolicyPcrLib
+
+[Sources]
+  Tpm2PolicyPcrLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SecurityPkg/SecurityPkg.dec
+  Q35Pkg/Q35Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  Tpm2DeviceLib
