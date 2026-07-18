@@ -1,15 +1,6 @@
 /** @file
   Implement the TPM2_PolicyPCR command (see Include/Library/Tpm2PolicyPcrLib.h
   for why this lives here instead of edk2/SecurityPkg/Library/Tpm2CommandLib).
-
-  Modeled directly on Tpm2PolicyOR's marshalling style in
-  edk2/SecurityPkg/Library/Tpm2CommandLib/Tpm2EnhancedAuthorization.c: no
-  TPMS_AUTH_COMMAND wrapper, because TPM2_PolicyPCR (like PolicyOR) extends a
-  policy session the caller already holds a handle to — it isn't itself an
-  authorized operation.
-
-  Copyright (c) 2013 - 2018, Intel Corporation. All rights reserved. <BR>
-  SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
 #include <Library/Tpm2PolicyPcrLib.h>

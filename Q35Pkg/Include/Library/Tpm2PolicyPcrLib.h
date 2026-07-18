@@ -3,12 +3,7 @@
 
   SecurityPkg's Tpm2CommandLib (edk2/SecurityPkg/Library/Tpm2CommandLib) wraps
   most TPM2 commands but not this one — EDK2's own firmware flows never
-  needed a PCR-gated policy session, so nobody upstream wrote it. This fills
-  that one gap as a Q35Pkg-local library instead of patching the vendored
-  edk2/ tree, so edk2/ stays pullable/mergeable from upstream untouched.
-
-  Copyright (c) 2013 - 2018, Intel Corporation. All rights reserved. <BR>
-  SPDX-License-Identifier: BSD-2-Clause-Patent
+  needed a PCR-gated policy session, so nobody upstream wrote it.
 **/
 
 #ifndef TPM2_POLICY_PCR_LIB_H_

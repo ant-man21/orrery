@@ -2,13 +2,13 @@
  * TpmProvisionApp.c
  *
  * "Setup First Boot" provisioning flow:
- *   1. Flash good ROM (signed)                          [external — not this app]
- *   2. Boot                                              [done — this is entry]
- *   3. Measure ROM -> extend PCR[16]                     [done]
- *   4. Compute PCR[16] policy digest (trial session)     [done]
- *   5. Define an NV index gated on that policy           [done]
+ *   1. Flash good ROM (signed)                            [external — not this app]
+ *   2. Boot                                               [done — this is entry]
+ *   3. Measure ROM -> extend PCR[16]                      [done]
+ *   4. Compute PCR[16] policy digest (trial session)      [done]
+ *   5. Define an NV index gated on that policy            [done]
  *   6. Write the secret into it via a real policy session [done]
- *   7. Store public key in TPM NVRAM (write-once)        [future]
+ *   7. Store public key in TPM NVRAM (write-once)         [future]
  *
  * Steps 4-6 are ProvisionSecretInNvram() below.
  *
@@ -40,7 +40,6 @@
 #include <Protocol/Tcg2Protocol.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileSystemInfo.h>
-// #include <Protocol/FirmwareVolume2.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2PolicyPcrLib.h>
@@ -48,60 +47,31 @@
 #include <IndustryStandard/TpmPtp.h>
 /* ── constants ─────────────────────────────────────────────────────────── */
 
-#define PCR_FOR_BIOS      16          /* user-controlled, safe to extend    */
+#define PCR_FOR_BIOS      16                   // user-controlled, safe to extend
 #define DUMMY_FD_PATH     L"\\data\\dummy.fd"
-#define SHARED_VOLUME_LABEL  L"SHARED"   /* matches `mformat -v SHARED` in qemu.sh */
+#define SHARED_VOLUME_LABEL  L"SHARED"         // matches `mformat -v SHARED` in qemu.sh
 #define SECRET_STRING     "hello"
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
-
-/* TPM2B_* helpers -------------------------------------------------------- */
-/* A sealed blob returned by Tpm2CreateSealed is split into two parts:      */
-/*   outPublic  – the TPM2B_PUBLIC  describing the object                   */
-/*   outPrivate – the TPM2B_PRIVATE (encrypted sensitive area)              */
-/* Both must be presented to Tpm2Load before you can call Tpm2Unseal.       */
-
-/* ── helper: locate TCG2 protocol ──────────────────────────────────────── */
-
-STATIC EFI_TCG2_PROTOCOL *
-FindTcg2Protocol (VOID)
-{
-  EFI_STATUS          Status;
-  EFI_TCG2_PROTOCOL  *Tcg2;
-
-  Status = gBS->LocateProtocol (
-                  &gEfiTcg2ProtocolGuid,
-                  NULL,
-                  (VOID **)&Tcg2
-                  );
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] TCG2 protocol not found: %r\n", Status);
-    return NULL;
-  }
-  return Tcg2;
-}
+EFI_TCG2_PROTOCOL  *Tcg2;
 
 /* ── helper: print TCG2 capabilities ───────────────────────────────────── */
-
 STATIC VOID
 PrintTcg2Caps (EFI_TCG2_PROTOCOL *Tcg2)
 {
   EFI_STATUS                        Status;
-  EFI_TCG2_BOOT_SERVICE_CAPABILITY  Cap;
+  EFI_TCG2_BOOT_SERVICE_CAPABILITY  Capability;
 
-  Cap.Size = sizeof (Cap);
-  Status   = Tcg2->GetCapability (Tcg2, &Cap);
+  Capability.Size = sizeof (Capability);
+  Status   = Tcg2->GetCapability (Tcg2, & Capability);
   if (EFI_ERROR (Status)) {
     Print (L"[PROVISION] GetCapability failed: %r\n", Status);
     return;
   }
 
-  Print (L"[PROVISION] TPM present         : %s\n",
-         Cap.TPMPresentFlag ? L"YES" : L"NO");
-  Print (L"[PROVISION] Active PCR banks    : 0x%08x\n",
-         Cap.ActivePcrBanks);
-  Print (L"[PROVISION] TPM2 supported      : %s\n",
-         (Cap.ProtocolVersion.Major >= 1) ? L"YES" : L"NO");
+  Print (L"[PROVISION] TPM present         : %s\n", Capability.TPMPresentFlag ? L"YES" : L"NO");
+  Print (L"[PROVISION] Active PCR banks    : 0x%08x\n", Capability.ActivePcrBanks);
+  Print (L"[PROVISION] TPM2 supported      : %s\n", (Capability.ProtocolVersion.Major >= 1) ? L"YES" : L"NO");
 }
 
 /* ── helper: read current ROM from flash ───────────────────────────────── */
@@ -523,37 +493,9 @@ WriteSecretToNvIndex (
   return Status;
 }
 
-/* ── provisioning: compute policy, define index, write secret ───────────── */
-STATIC EFI_STATUS
-ProvisionSecretInNvram (
-  IN UINT8   *Secret,
-  IN UINTN    SecretLen
-  )
-{
-  EFI_STATUS    Status;
-  TPM2B_DIGEST  PolicyDigest;
 
-  Status = Tpm2RequestUseTpm ();
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Tpm2RequestUseTpm failed: %r\n", Status);
-    return Status;
-  }
-
-  Status = ComputePcr16PolicyDigest (&PolicyDigest);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Status = DefineSecretNvIndex (&PolicyDigest);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  return WriteSecretToNvIndex (Secret, SecretLen);
-}
 
 /* ── EFI entry point ───────────────────────────────────────────────────── */
-
 EFI_STATUS
 EFIAPI
 UefiMain (
@@ -562,18 +504,20 @@ UefiMain (
   )
 {
   EFI_STATUS          Status;
-  EFI_TCG2_PROTOCOL  *Tcg2;
   VOID               *RomBuffer = NULL;
   UINTN               RomSize   = 0;
+  TPM2B_DIGEST  PolicyDigest;
 
   Print (L"\n=== TpmProvisionApp (Setup First Boot) ===\n\n");
   DEBUG ((DEBUG_INFO, "TpmProvisionApp start...\n"));
 
   /* Step 1: init TPM / locate TCG2 protocol, print caps */
-  Tcg2 = FindTcg2Protocol ();
-  if (Tcg2 == NULL) {
+  Status = gBS->LocateProtocol (&gEfiTcg2ProtocolGuid,NULL,(VOID **)&Tcg2);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] TCG2 protocol not found: %r\n", Status);
     return EFI_NOT_FOUND;
   }
+
   PrintTcg2Caps (Tcg2);
   Print (L"\n");
 
@@ -612,10 +556,29 @@ UefiMain (
   /* Steps 4-6: compute PCR[16] policy, define NV index, write secret into it */
   Print (L"[PROVISION] Sealing secret \"" SECRET_STRING L"\" to PCR[%u] via NV index 0x%x...\n",
          PCR_FOR_BIOS, SECRET_NV_INDEX);
-  Status = ProvisionSecretInNvram (
-             (UINT8 *)SECRET_STRING,
-             SECRET_LEN
-             );
+
+
+
+  Status = Tpm2RequestUseTpm ();
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2RequestUseTpm failed: %r\n", Status);
+    return Status;
+  }
+
+  Status = ComputePcr16PolicyDigest (&PolicyDigest);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = DefineSecretNvIndex (&PolicyDigest);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = WriteSecretToNvIndex ((UINT8 *)SECRET_STRING, SECRET_LEN);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   FreePool (RomBuffer);
 
