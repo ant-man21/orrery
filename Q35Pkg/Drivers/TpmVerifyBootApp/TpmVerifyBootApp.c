@@ -8,19 +8,12 @@
  *   4. If success -> boot continues                       [TODO]
  *   5. If fail -> halt (BIOS modified!)                    [TODO]
  *
- * This is a skeleton: each step below is a stand-in that prints what it
- * will do and returns EFI_SUCCESS. Nothing here talks to the TPM yet.
- * Fill these in alongside TpmProvisionApp's seal step (its
- * SealUnsealRoundTrip()), since step 3 here is that same unseal logic run
- * against whatever PCR[16] happens to be *this* boot.
- *
- * Planned dev/test mode: after flashing a *different* ROM, step 1's
+ * This app always measures the live ROM — there is no golden/reference
+ * image to fall back to, on real hardware or here. To exercise the
+ * tamper-detection path, flash a *different* ROM and re-run: step 1's
  * measurement produces a different PCR[16], so step 3's unseal is
- * expected to fail — that's the tamper-detection path working as
- * intended. To confirm the mechanism still succeeds against the
- * *original* image (without needing a second physical firmware build),
- * a future flag here should re-measure fs1:\data\dummy.fd — the golden
- * ROM snapshot TpmProvisionApp saves — instead of the live ROM.
+ * expected to fail. To confirm the mechanism still succeeds, flash the
+ * original ROM back and re-run.
  *
  * Companion app: TpmProvisionApp (first-boot provisioning flow).
  *
@@ -40,9 +33,6 @@
 #include <Library/DebugLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
-#include <Protocol/SimpleFileSystem.h>
-#include <Protocol/ShellParameters.h>
-#include <Guid/FileSystemInfo.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
@@ -52,13 +42,10 @@
 
 /* ── constants ─────────────────────────────────────────────────────────── */
 #define PCR_FOR_BIOS  16
-#define DUMMY_FD_PATH     L"\\data\\dummy.fd"
-#define SHARED_VOLUME_LABEL  L"SHARED"         // matches `mformat -v SHARED` in qemu.sh
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 
 EFI_TCG2_PROTOCOL  *Tcg2;
-EFI_SHELL_PARAMETERS_PROTOCOL *ShellParams;
 
 /* ── helper: read current ROM from flash ───────────────────────────────── */
 STATIC EFI_STATUS
@@ -81,121 +68,6 @@ ReadRomImage (
   *RomSize = FlashSize;
   Print (L"[VERIFY] ROM snapshot: 0xFFC00000, %u bytes\n", (UINT32)FlashSize);
   return EFI_SUCCESS;
-}
-
-/* ── helper: open the shared (fs1:) volume by label ─────────────────────── */
-STATIC EFI_FILE_PROTOCOL *
-OpenSharedVolume (VOID)
-{
-  EFI_STATUS                        Status;
-  UINTN                              NumHandles;
-  EFI_HANDLE                        *Handles;
-  UINTN                              Index;
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   *Fs;
-  EFI_FILE_PROTOCOL                 *Root;
-  EFI_FILE_PROTOCOL                 *Fallback;
-  UINT8                              InfoBuf[512];
-  UINTN                              InfoSize;
-  EFI_FILE_SYSTEM_INFO              *Info;
-
-  Status = gBS->LocateHandleBuffer (
-                  ByProtocol,
-                  &gEfiSimpleFileSystemProtocolGuid,
-                  NULL,
-                  &NumHandles,
-                  &Handles
-                  );
-  if (EFI_ERROR (Status) || NumHandles == 0) {
-    Print (L"[VERIFY] No filesystem found: %r\n", Status);
-    return NULL;
-  }
-
-  Fallback = NULL;
-  for (Index = 0; Index < NumHandles; Index++) {
-    Status = gBS->HandleProtocol (
-                    Handles[Index],
-                    &gEfiSimpleFileSystemProtocolGuid,
-                    (VOID **)&Fs
-                    );
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    Status = Fs->OpenVolume (Fs, &Root);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    InfoSize = sizeof (InfoBuf);
-    Status   = Root->GetInfo (Root, &gEfiFileSystemInfoGuid, &InfoSize, InfoBuf);
-    if (!EFI_ERROR (Status)) {
-      Info = (EFI_FILE_SYSTEM_INFO *)InfoBuf;
-      if (StrCmp (Info->VolumeLabel, SHARED_VOLUME_LABEL) == 0) {
-        if (Fallback != NULL) {
-          Fallback->Close (Fallback);
-        }
-        FreePool (Handles);
-        return Root;
-      }
-    }
-
-    if (Fallback == NULL) {
-      Fallback = Root;
-    } else {
-      Root->Close (Root);
-    }
-  }
-
-  FreePool (Handles);
-  if (Fallback != NULL) {
-    Print (L"[VERIFY] Warning: no volume labeled %s found — falling back to first filesystem\n",
-           SHARED_VOLUME_LABEL);
-  }
-  return Fallback;
-}
-
-
-/* ── helper: read golden ROM snapshot from disk ─────────────────────────── */
-STATIC EFI_STATUS
-ReadGoldRomImage (
-  OUT VOID   **RomBuffer,
-  OUT UINTN   *RomSize
-  )
-{
-  EFI_STATUS          Status;
-  EFI_FILE_PROTOCOL  *Root;
-  EFI_FILE_PROTOCOL  *File;
-  UINTN               ReadSize;
-
-  Root = OpenSharedVolume ();
-  if (Root == NULL) {
-    return EFI_NOT_FOUND;
-  }
-
-  Status = Root->Open (Root, &File, DUMMY_FD_PATH, EFI_FILE_MODE_READ, 0);
-  if (EFI_ERROR (Status)) {
-    Root->Close (Root);
-    Print (L"[VERIFY] Cannot read %s: %r\n", DUMMY_FD_PATH, Status);
-    return Status;
-  }
-  *RomBuffer = AllocatePool (SIZE_4MB);
-  if (*RomBuffer == NULL) {
-    File->Close (File);
-    Root->Close (Root);
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  ReadSize = SIZE_4MB;
-  Status = File->Read (File, &ReadSize, *RomBuffer);
-  File->Close (File);
-  Root->Close (Root);
-
-  if (EFI_ERROR (Status)) {
-    Print (L"[VERIFY] Read failed: %r\n", Status);
-  } else {
-    Print (L"[VERIFY] Read %u bytes from %s\n", (UINT32)ReadSize, DUMMY_FD_PATH);
-  }
-  return Status;
 }
 
 /* ── helper: extend PCR[16] with arbitrary data ─────────────────────────── */
@@ -384,7 +256,6 @@ UefiMain (
   TPM2B_MAX_BUFFER    OutData;
   VOID               *RomBuffer = NULL;
   UINTN               RomSize   = 0;
-  BOOLEAN             UseCurrentRom = FALSE;
 
   Print (L"\n=== TpmVerifyBootApp (Reboot / Verify) ===\n\n");
   DEBUG ((DEBUG_INFO, "TpmVerifyBootApp start...\n"));
@@ -394,19 +265,7 @@ UefiMain (
     return EFI_NOT_FOUND;
   }
 
-  Status = gBS->HandleProtocol (ImageHandle,&gEfiShellParametersProtocolGuid,(VOID **)&ShellParams);
-  if (!EFI_ERROR (Status)) {
-    for (UINTN i = 1; i < ShellParams->Argc; i++) {
-      if (StrCmp (ShellParams->Argv[i], L"-c") == 0) {
-        UseCurrentRom = TRUE;
-      }
-    }
-  }
-  if (UseCurrentRom) {
-    Status = ReadRomImage (&RomBuffer, &RomSize);
-  } else {
-    Status = ReadGoldRomImage (&RomBuffer, &RomSize);
-  }
+  Status = ReadRomImage (&RomBuffer, &RomSize);
   Status = ExtendPcr16 (Tcg2, RomBuffer, RomSize);
 
   Status = VerifyBoot (&OutData);
@@ -416,7 +275,7 @@ UefiMain (
     return Status;
   }
 
-  Print (L"[VERIFY] Unseal succeeded — PCR[%u] matches golden state, continuing boot.\n",
+  Print (L"[VERIFY] Unseal succeeded — PCR[%u] matches sealed state, continuing boot.\n",
          PCR_FOR_BIOS);
 
   Print (L"[VERIFY] Secret: ");

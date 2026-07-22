@@ -18,8 +18,8 @@
 #   pushed into shared.img *in place* (mcopy -o) so they show up on fs1: on
 #   the next run without needing qemu.sh --reset-shared — which wipes and
 #   rebuilds the whole image from shared/, destroying anything the VM wrote
-#   there (dummy.fd, sealed blobs, etc). shared.img is only fully (re)created
-#   here if it doesn't exist yet.
+#   there (sealed blobs, output files, etc). shared.img is only fully
+#   (re)created here if it doesn't exist yet.
 #   From the UEFI shell those are visible as:
 #     fs1:\apps\TpmProvisionApp.efi   (etc.)
 # =============================================================================

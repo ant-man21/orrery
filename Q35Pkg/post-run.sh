@@ -5,7 +5,7 @@
 # Usage: ./post-run.sh
 #
 # shared.img is a real FAT disk image, not a live host-folder mount —
-# anything a UEFI app writes to fs1:\data\ (dummy.fd, sealed blobs, ...)
+# anything a UEFI app writes to fs1:\data\ (sealed blobs, output files, ...)
 # stays inside shared.img until it's explicitly pulled back out. Run this
 # after a qemu session to copy everything under ::data/ down into
 # Q35Pkg/shared/data/ on the host (overwrite-only: files already in

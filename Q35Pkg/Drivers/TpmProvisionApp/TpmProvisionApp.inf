@@ -4,9 +4,12 @@
 ##   1. Init TPM / locate TCG2 protocol
 ##   2. Boot (unsigned for now)
 ##   3. Measure ROM -> extend PCR[16]
-##   4. Create secret
-##   5. Seal secret to PCR[16]
-##   6. Store sealed blob on disk (fs1:\data\)
+##   4. Compute PCR[16] policy digest
+##   5. Define NV index gated on that policy
+##   6. Write the secret into it via a real policy session
+##
+## Run once against a wiped/clean TPM. Every subsequent boot runs
+## TpmVerifyBootApp instead, against the live ROM only.
 ##
 ## Companion app: TpmVerifyBootApp (reboot / unseal / tamper-detect flow).
 ##
@@ -39,7 +42,6 @@
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
   UefiRuntimeServicesTableLib     ## gRT (for later phases)
-  BaseLib                         ## StrCmp (match fs1: by volume label)
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
@@ -51,12 +53,9 @@
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
-  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd / sealed blob)
-  gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (read ROM image)
 
 [Guids]
   gEfiTpmDeviceInstanceTpm20DtpmGuid     ## for TPM device selection
-  gEfiFileSystemInfoGuid                 ## identify fs1: (SHARED) by volume label
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

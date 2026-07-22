@@ -16,7 +16,7 @@
 # Shared folder layout (host side):
 #   Q35Pkg/shared/          ← everything here appears on fs1: in UEFI shell
 #     apps/                 ← drop .efi files here
-#     data/                 ← dummy.fd, sealed blobs, etc.
+#     data/                 ← sealed blobs, output files from UEFI apps, etc.
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,7 +91,7 @@ fi
 # ---------- shared folder + disk image ----------------------------------------
 # Host directory:  Q35Pkg/shared/
 #   apps/          → drop .efi binaries here; shell can run them as fs1:\apps\Foo.efi
-#   data/          → dummy.fd, sealed blobs, output files from UEFI apps
+#   data/          → sealed blobs, output files from UEFI apps
 #
 # Appears in the UEFI shell as fs1: (fs0: is the UEFI shell image)
 #

@@ -12,11 +12,15 @@
  *
  * Steps 4-6 are ProvisionSecretInNvram() below.
  *
- * Dev/test aid (not part of the production flow): this app also snapshots
- * the running ROM to fs1:\data\dummy.fd. That "golden" ROM image lets
- * TpmVerifyBootApp re-measure the *original* ROM on demand, so the
- * tamper-detection path can be exercised without needing to actually
- * reflash firmware between test runs.
+ * Demo flow: this app runs once, against a wiped/clean TPM, to define the
+ * NV index and seal the secret to PCR[16]. Every subsequent boot runs
+ * TpmVerifyBootApp instead, which measures the live ROM only — there is
+ * no golden/reference image on real hardware, so none is used here either.
+ *
+ * Open question: re-running this app against an already-provisioned TPM
+ * (e.g. after a legitimate firmware update changes PCR[16]) currently
+ * fails the NV write step silently, since the index is still gated on the
+ * old policy. See issue #5 (OTA research) for the re-provisioning story.
  *
  * Companion app: TpmVerifyBootApp (reboot / unseal / tamper-detect flow).
  *
@@ -36,8 +40,6 @@
 #include <Library/DebugLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
-#include <Protocol/SimpleFileSystem.h>
-#include <Guid/FileSystemInfo.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
@@ -47,8 +49,6 @@
 /* ── constants ─────────────────────────────────────────────────────────── */
 
 #define PCR_FOR_BIOS      16                   // user-controlled, safe to extend
-#define DUMMY_FD_PATH     L"\\data\\dummy.fd"
-#define SHARED_VOLUME_LABEL  L"SHARED"         // matches `mformat -v SHARED` in qemu.sh
 #define SECRET_STRING     "hello"
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
@@ -179,120 +179,6 @@ ExtendPcr16 (
   }
 
   return EFI_SUCCESS;
-}
-
-/* ── helper: open the shared (fs1:) volume by label ─────────────────────── */
-STATIC EFI_FILE_PROTOCOL *
-OpenSharedVolume (VOID)
-{
-  EFI_STATUS                        Status;
-  UINTN                              NumHandles;
-  EFI_HANDLE                        *Handles;
-  UINTN                              Index;
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   *Fs;
-  EFI_FILE_PROTOCOL                 *Root;
-  EFI_FILE_PROTOCOL                 *Fallback;
-  UINT8                              InfoBuf[512];
-  UINTN                              InfoSize;
-  EFI_FILE_SYSTEM_INFO              *Info;
-
-  Status = gBS->LocateHandleBuffer (
-                  ByProtocol,
-                  &gEfiSimpleFileSystemProtocolGuid,
-                  NULL,
-                  &NumHandles,
-                  &Handles
-                  );
-  if (EFI_ERROR (Status) || NumHandles == 0) {
-    Print (L"[PROVISION] No filesystem found: %r\n", Status);
-    return NULL;
-  }
-
-  Fallback = NULL;
-  for (Index = 0; Index < NumHandles; Index++) {
-    Status = gBS->HandleProtocol (
-                    Handles[Index],
-                    &gEfiSimpleFileSystemProtocolGuid,
-                    (VOID **)&Fs
-                    );
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    Status = Fs->OpenVolume (Fs, &Root);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    InfoSize = sizeof (InfoBuf);
-    Status   = Root->GetInfo (Root, &gEfiFileSystemInfoGuid, &InfoSize, InfoBuf);
-    if (!EFI_ERROR (Status)) {
-      Info = (EFI_FILE_SYSTEM_INFO *)InfoBuf;
-      if (StrCmp (Info->VolumeLabel, SHARED_VOLUME_LABEL) == 0) {
-        if (Fallback != NULL) {
-          Fallback->Close (Fallback);
-        }
-        FreePool (Handles);
-        return Root;
-      }
-    }
-
-    if (Fallback == NULL) {
-      Fallback = Root;
-    } else {
-      Root->Close (Root);
-    }
-  }
-
-  FreePool (Handles);
-  if (Fallback != NULL) {
-    Print (L"[PROVISION] Warning: no volume labeled %s found — falling back to first filesystem\n",
-           SHARED_VOLUME_LABEL);
-  }
-  return Fallback;
-}
-
-/* ── helper: save buffer to a file on the shared (fs1:) volume ──────────── */
-
-STATIC EFI_STATUS
-SaveFileToDisk (
-  IN CHAR16  *FileName,
-  IN VOID    *Data,
-  IN UINTN    DataSize
-  )
-{
-  EFI_STATUS          Status;
-  EFI_FILE_PROTOCOL  *Root;
-  EFI_FILE_PROTOCOL  *File;
-  UINTN               WriteSize;
-
-  Root = OpenSharedVolume ();
-  if (Root == NULL) {
-    return EFI_NOT_FOUND;
-  }
-
-  Status = Root->Open (
-                   Root, &File, FileName,
-                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
-                   0
-                   );
-  if (EFI_ERROR (Status)) {
-    Root->Close (Root);
-    Print (L"[PROVISION] Cannot create %s: %r\n", FileName, Status);
-    return Status;
-  }
-
-  WriteSize = DataSize;
-  Status    = File->Write (File, &WriteSize, Data);
-  File->Close (File);
-  Root->Close (Root);
-
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Write failed: %r\n", Status);
-  } else {
-    Print (L"[PROVISION] Saved %u bytes to %s\n", (UINT32)WriteSize, FileName);
-  }
-  return Status;
 }
 
 /* ── helper: PCR selection for PCR[16], SHA256 bank ──────────────────────
@@ -561,30 +447,10 @@ UefiMain (
   }
 
   Status = WriteSecretToNvIndex ((UINT8 *)SECRET_STRING, SECRET_LEN); //TODO make this not hardcoded
+  FreePool (RomBuffer);
   if (EFI_ERROR (Status)) {
-    FreePool (RomBuffer);
     return Status;
   }
-
-  /*
-   * Dev/test aid, not one of the 7 provisioning steps: snapshot the ROM
-   * we just sealed against to fs1:\data\dummy.fd. TpmVerifyBootApp can
-   * re-hash this "golden" copy on demand to simulate "the original ROM"
-   * without needing a second physical firmware build.
-   *
-   * Only saved once the seal above actually succeeds — if the NV index
-   * already existed under an older policy and this write failed, we must
-   * NOT overwrite dummy.fd, or the golden reference would drift out of
-   * sync with the policy that's actually still enforced.
-   */
-  Print (L"\n[PROVISION] Saving ROM snapshot to fs1:" DUMMY_FD_PATH L"...\n");
-  Status = SaveFileToDisk (DUMMY_FD_PATH, RomBuffer, RomSize);
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Warning: could not save dummy.fd (%r) – continuing\n",
-           Status);
-  }
-
-  FreePool (RomBuffer);
 
   Print (L"\n=== TpmProvisionApp done (%r) ===\n\n", Status);
   return Status;

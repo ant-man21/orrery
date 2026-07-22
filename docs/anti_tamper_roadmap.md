@@ -15,27 +15,48 @@ conversation doesn't need this project's full history to be productive.
   `Q35Pkg/build.sh`, run via `Q35Pkg/qemu.sh`. Host machine runs the x86_64
   guest fully emulated under QEMU/TCG (host is aarch64 — no KVM).
 - **`TpmProvisionApp`** (`Q35Pkg/Drivers/TpmProvisionApp/`) — UEFI application,
-  run manually from the shell (`fs1:\apps\TpmProvisionApp.efi`). Currently
-  implements:
-  - Locate `EFI_TCG2_PROTOCOL`, print capabilities.
-  - Snapshot the running ROM (OVMF flash at `0xFFC00000`, 4MB) and extend
-    PCR[16] with its hash via `HashLogExtendEvent`.
-  - Read back and print the resulting PCR[16] value via `Tpm2PcrRead`
-    (works — this round-trip is fully debugged, see gotchas below).
-  - Save the ROM snapshot to `fs1:\data\dummy.fd` (dev/test aid only, not
-    part of the real security flow — see "Environment notes" below).
-  - Steps 4-6 (create secret / seal / persist) are **not yet implemented** —
-    this is the immediate next task, and it now targets TPM NVRAM instead of
-    a sealed blob (see Phase 2).
+  run manually from the shell (`fs1:\apps\TpmProvisionApp.efi`). Implements
+  the full "Setup First Boot" flow: locate `EFI_TCG2_PROTOCOL`, print
+  capabilities, snapshot the running ROM (OVMF flash at `0xFFC00000`, 4MB)
+  and extend PCR[16] with its hash, compute the PCR[16] policy digest via a
+  trial session, define an NV index gated on that policy, and write the
+  secret into it via a real policy session. Meant to run once, against a
+  wiped/clean TPM.
 - **`TpmVerifyBootApp`** (`Q35Pkg/Drivers/TpmVerifyBootApp/`) — companion app,
-  currently a stub. All three steps (measure+extend, load, unseal/read) are
-  placeholder functions that print and return success. Not wired to real TPM
-  calls yet.
+  implements the full "Reboot / Verify" flow: measure the live ROM, extend
+  PCR[16], open a real policy session, and read the secret back out of the
+  NV index — which only succeeds if PCR[16] still matches what was locked
+  in at provisioning time. No golden/reference image is used or needed;
+  real hardware never has one to fall back to, so this app always measures
+  the live ROM (see "Demo flow" below — the earlier `dummy.fd` dev aid was
+  removed as unreliable and unnecessary).
 - **Dev tooling**: `build.sh` builds + syncs `.efi`s into `shared/apps/` +
   pushes them into `shared.img` in place (no wipe). `post-run.sh` pulls
   `fs1:\data\` back out of `shared.img` onto the host after a run.
   `qemu.sh --reset-shared` still exists as an explicit full-wipe/start-over
   button, separate from normal build/run.
+
+## Demo flow
+
+1. `TpmProvisionApp` runs **once**, against a wiped/clean TPM: it measures
+   the ROM, extends PCR[16], and defines + seals the secret into the NV
+   index gated on that PCR[16] value.
+2. Every subsequent boot runs `TpmVerifyBootApp` instead, against the
+   **live ROM only** — it re-measures whatever firmware is actually
+   running and re-derives PCR[16], then tries to read the secret back out.
+   A match means the firmware hasn't changed since provisioning; a
+   mismatch means it has, and the unseal fails.
+3. Tamper detection is exercised by rebuilding/flashing a *different* ROM
+   (e.g. add or remove a driver from the FV) and re-running
+   `TpmVerifyBootApp` — expect the unseal to fail. Flash the original ROM
+   back to confirm it succeeds again. This has been validated end-to-end.
+
+**Open question, carried forward to [#5](https://github.com/ant-man21/orrery/issues/5):**
+what's the re-provisioning story when the ROM legitimately changes (a real
+firmware update)? Running `TpmProvisionApp` a second time against an
+already-defined NV index currently fails the write step silently if
+PCR[16] changed, since the index is still gated on the old policy. Phase 3
+below sketches a resealing flow for this, but it isn't built yet.
 
 ## Gotchas already paid for (don't re-learn these)
 
@@ -72,7 +93,7 @@ conversation doesn't need this project's full history to be productive.
   this project should verify via clean compilation and, where possible,
   `debug.log`, not by attempting to launch QEMU itself.
 
-## Phase 2 (next up): seal the secret via TPM NVRAM, not a blob
+## Phase 2 (done): seal the secret via TPM NVRAM, not a blob
 
 Decided: skip sealed-blob-on-disk. Use a PCR[16]-gated NV Index instead — same
 hardware-enforced security property, far less new code (1 new TPM2 command
@@ -109,14 +130,14 @@ demonstrate.
    - Fails → PCR[16] doesn't match → print failure → halt (simulate refusing
      to continue boot).
 
-**Test plan**:
+**Test plan** (completed — see "Demo flow" above):
 - Boot `TpmVerifyBootApp` against the *same* firmware image used for
   provisioning → expect success (PCR[16] naturally matches).
 - Rebuild firmware with an intentional change (extra dummy driver, changed
   string, whatever), point `qemu.sh` at the new `OVMF_CODE.fd`, boot
   `TpmVerifyBootApp` again → expect failure/halt. This is the actual
-  tamper-detection proof, not `dummy.fd` — `dummy.fd` is dev/test tooling
-  only (see notes above), never a trust anchor.
+  tamper-detection proof, and it's the only ROM comparison this project
+  does — there is no golden/reference image, on real hardware or here.
 
 **Deliverable**: a real, working, demonstrable measured-boot gate — extend
 PCR wrong, TPM refuses the secret, in hardware, provably.
@@ -185,10 +206,7 @@ Eventually:
 
 ## Immediate next action
 
-Start Phase 2: implement `Tpm2PolicyPCR`, then wire the
-trial-session → `NvDefineSpace` → real-session → `NvWrite` flow into
-`TpmProvisionApp`, then fill in `TpmVerifyBootApp`'s three stub functions
-with the real read-side flow. Build after each function, don't batch it all
-into one untested change — this codebase has already burned significant time
-on TPM marshalling bugs that a smaller, verified-as-you-go approach would
-have caught immediately.
+Phase 2 is done and validated (see "Demo flow" above). Next up is deciding
+the re-provisioning story flagged as an open question there — start
+[#5](https://github.com/ant-man21/orrery/issues/5) (OTA research) before
+scoping Phase 3's implementation.

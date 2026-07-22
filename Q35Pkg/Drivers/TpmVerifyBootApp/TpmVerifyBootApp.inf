@@ -1,14 +1,14 @@
 ## TpmVerifyBootApp.inf
 ##
-## UEFI Application – "Reboot / No Update" verification flow (stub):
-##   1. Measure ROM -> extend PCR[16]
-##   2. Load sealed blob from disk (fs1:\data\)
-##   3. Unseal (TPM checks PCR[16] + integrity)
+## UEFI Application – "Reboot / No Update" verification flow:
+##   1. Measure live ROM -> extend PCR[16]
+##   2. Open a policy session against PCR[16]
+##   3. Read the secret from the sealed NV index (fails if PCR[16] differs)
 ##   4. If success -> boot continues
 ##   5. If fail -> halt (BIOS modified!)
 ##
-## Currently a skeleton — each step is a TODO placeholder pending
-## TpmProvisionApp's seal step landing.
+## Always measures the live ROM — there is no golden/reference image.
+## Run TpmProvisionApp once first to define the NV index and seal it.
 ##
 ## Companion app: TpmProvisionApp (first-boot provisioning flow).
 ##
@@ -41,7 +41,6 @@
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
   UefiRuntimeServicesTableLib     ## gRT (for later phases)
-  BaseLib                         ## StrCmp (match fs1: by volume label)
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
@@ -52,13 +51,7 @@
   DebugLib
 
 [Protocols]
-  gEfiTcg2ProtocolGuid                   ## CONSUMES  (wired up once steps are implemented)
-  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (save dummy.fd / sealed blob)
-  gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (read ROM image)
-  gEfiShellParametersProtocolGuid
-
-[Guids]
-  gEfiFileSystemInfoGuid 
+  gEfiTcg2ProtocolGuid                   ## CONSUMES
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up
