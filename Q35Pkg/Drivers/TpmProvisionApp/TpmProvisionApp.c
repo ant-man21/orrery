@@ -44,6 +44,7 @@
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
 #include <Library/Tpm2PolicyPcrLib.h>
+#include <Library/Tpm2PcrLib.h>
 #include <IndustryStandard/Tpm20.h>
 #include <IndustryStandard/TpmPtp.h>
 /* ── constants ─────────────────────────────────────────────────────────── */
@@ -96,148 +97,6 @@ ReadRomImage (
   return EFI_SUCCESS;
 }
 
-/* ── helper: extend PCR[16] with arbitrary data ─────────────────────────── */
-STATIC EFI_STATUS
-ExtendPcr16 (
-  IN EFI_TCG2_PROTOCOL  *Tcg2,
-  IN VOID               *Data,
-  IN UINTN               DataSize
-  )
-{
-  EFI_STATUS                 Status;
-  EFI_TCG2_EVENT            *Event;
-  UINTN                      EventSize;
-  UINT32                     UpdateCounter;
-
-  /*
-   * HashLogExtendEvent expects a caller-allocated EFI_TCG2_EVENT header.
-   * The event log entry type EV_POST_CODE is conventional for ROM data.
-   */
-  EventSize = sizeof (EFI_TCG2_EVENT) + sizeof ("BIOS ROM") - 1;
-  Event     = AllocateZeroPool (EventSize);
-  if (Event == NULL) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  Event->Size                         = (UINT32)EventSize;
-  Event->Header.HeaderSize            = sizeof (EFI_TCG2_EVENT_HEADER);
-  Event->Header.HeaderVersion         = EFI_TCG2_EVENT_HEADER_VERSION;
-  Event->Header.PCRIndex              = PCR_FOR_BIOS;
-  Event->Header.EventType             = EV_POST_CODE;
-  CopyMem (Event->Event, "BIOS ROM", sizeof ("BIOS ROM") - 1);
-  DEBUG ((DEBUG_INFO, "ExtendPcr16 [1]\n"));
-
-  Status = Tcg2->HashLogExtendEvent (
-                   Tcg2,
-                   0,                            /* Flags                  */
-                   (EFI_PHYSICAL_ADDRESS)(UINTN)Data,
-                   (UINT64)DataSize,
-                   Event
-                   );
-  FreePool (Event);
-  DEBUG ((DEBUG_INFO, "ExtendPcr16 [2]\n"));
-
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] HashLogExtendEvent failed: %r\n", Status);
-    return Status;
-  }
-
-  /* Print the resulting PCR value for verification */
-  {
-    TPML_DIGEST  Digests;
-    TPMS_PCR_SELECTION PcrSel;
-
-    ZeroMem (&PcrSel, sizeof (PcrSel));
-    PcrSel.hash = TPM_ALG_SHA256;
-    PcrSel.sizeofSelect = 3;
-    PcrSel.pcrSelect[PCR_FOR_BIOS / 8] = (UINT8)(1 << (PCR_FOR_BIOS % 8));
-
-    TPML_PCR_SELECTION In;
-    TPML_PCR_SELECTION Out;
-    ZeroMem (&In, sizeof (In));
-    ZeroMem (&Out, sizeof (Out));
-    In.count = 1;
-    In.pcrSelections[0] = PcrSel;
-    DEBUG ((DEBUG_INFO, "ExtendPcr16 [3]\n"));
-
-    Status = Tpm2RequestUseTpm ();
-    if (EFI_ERROR (Status)) {
-      Print (L"[PROVISION] Tpm2RequestUseTpm failed: %r\n", Status);
-      return Status;
-    }
-
-    Status = Tpm2PcrRead (&In, &UpdateCounter, &Out, &Digests);
-    DEBUG ((DEBUG_INFO, "ExtendPcr16 [4]\n"));
-    if (!EFI_ERROR (Status) && Digests.count > 0) {
-      UINT32 i;
-      Print (L"[PROVISION] PCR[%u] = ", PCR_FOR_BIOS);
-      for (i = 0; i < Digests.digests[0].size; i++) {
-        Print (L"%02x", Digests.digests[0].buffer[i]);
-      }
-      Print (L"\n");
-    }
-  }
-
-  return EFI_SUCCESS;
-}
-
-/* ── helper: PCR selection for PCR[16], SHA256 bank ──────────────────────
- * TPML_PCR_SELECTION with a single bank entry selecting just PCR_FOR_BIOS.
- * sizeofSelect = 3 covers PCRs 0-23; pcrSelect is a bitmask, one bit per PCR.
- */
-STATIC VOID
-BuildPcr16Selection (
-  OUT TPML_PCR_SELECTION  *Pcrs
-  )
-{
-  ZeroMem (Pcrs, sizeof (*Pcrs));
-  Pcrs->count                       = 1;
-  Pcrs->pcrSelections[0].hash         = TPM_ALG_SHA256;
-  Pcrs->pcrSelections[0].sizeofSelect = 3;
-  Pcrs->pcrSelections[0].pcrSelect[PCR_FOR_BIOS / 8] = (UINT8)(1 << (PCR_FOR_BIOS % 8));
-}
-
-/* ── helper: open a session (trial or real policy) ───────────────────────
- * Unbound, unsalted, no parameter encryption — we don't need any of that,
- * just a handle to fold TPM2_PolicyPCR assertions into.
- */
-STATIC EFI_STATUS
-OpenPcrPolicySession (
-  IN  TPM_SE                 SessionType,
-  OUT TPMI_SH_AUTH_SESSION  *SessionHandle
-  )
-{
-  EFI_STATUS              Status;
-  TPM2B_NONCE             NonceCaller;
-  TPM2B_NONCE             NonceTpm;
-  TPM2B_ENCRYPTED_SECRET  Salt;
-  TPMT_SYM_DEF            Symmetric;
-
-  ZeroMem (&NonceCaller, sizeof (NonceCaller));
-  NonceCaller.size = SHA256_DIGEST_SIZE;
-
-  ZeroMem (&Salt, sizeof (Salt));
-  ZeroMem (&NonceTpm, sizeof (NonceTpm));
-  Symmetric.algorithm = TPM_ALG_NULL;
-
-  Status = Tpm2StartAuthSession (
-             TPM_RH_NULL,               /* TpmKey  – unsalted            */
-             TPM_RH_NULL,               /* Bind    – unbound             */
-             &NonceCaller,
-             &Salt,
-             SessionType,
-             &Symmetric,
-             TPM_ALG_SHA256,
-             SessionHandle,
-             &NonceTpm
-             );
-  if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Tpm2StartAuthSession failed: %r\n", Status);
-  }
-
-  return Status;
-}
-
 /* ── helper: compute the PCR[16] policy digest via a trial session ───────
  * This is the "what value should lock the NV index" leg — nothing is
  * actually authorized here, we're just asking the TPM to precompute the
@@ -255,10 +114,11 @@ ComputePcr16PolicyDigest (
 
   Status = OpenPcrPolicySession (TPM_SE_TRIAL, &TrialSession);
   if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] OpenPcrPolicySession (trial) failed: %r\n", Status);
     return Status;
   }
 
-  BuildPcr16Selection (&Pcrs);
+  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
   ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));   /* size=0 -> TPM uses live PCR value */
 
   Status = Tpm2PolicyPCR (TrialSession, &EmptyPcrDigest, &Pcrs);
@@ -347,10 +207,11 @@ WriteSecretToNvIndex (
 
   Status = OpenPcrPolicySession (TPM_SE_POLICY, &RealSession);
   if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] OpenPcrPolicySession (real) failed: %r\n", Status);
     return Status;
   }
 
-  BuildPcr16Selection (&Pcrs);
+  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
   ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));
 
   Status = Tpm2PolicyPCR (RealSession, &EmptyPcrDigest, &Pcrs);
@@ -417,10 +278,26 @@ UefiMain (
   }
 
   Print (L"[PROVISION] Extending PCR[%u]...\n", PCR_FOR_BIOS);
-  Status = ExtendPcr16 (Tcg2, RomBuffer, RomSize);
-  if (EFI_ERROR (Status)) {
-    FreePool (RomBuffer);
-    return Status;
+  {
+    TPML_DIGEST  Digests;
+
+    Status = ExtendPcr (Tcg2, PCR_FOR_BIOS, RomBuffer, RomSize, "BIOS ROM", &Digests);
+    if (EFI_ERROR (Status)) {
+      Print (L"[PROVISION] ExtendPcr failed: %r\n", Status);
+      FreePool (RomBuffer);
+      return Status;
+    }
+
+    if (Digests.count > 0) {
+      UINT32  i;
+
+      Print (L"[PROVISION] PCR[%u] = ", PCR_FOR_BIOS);
+      for (i = 0; i < Digests.digests[0].size; i++) {
+        Print (L"%02x", Digests.digests[0].buffer[i]);
+      }
+
+      Print (L"\n");
+    }
   }
   Print (L"\n");
 

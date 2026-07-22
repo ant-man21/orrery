@@ -46,6 +46,7 @@
   PrintLib                        ## SPrint
   Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite …
   Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (Q35Pkg-local — see its header)
+  Tpm2PcrLib                      ## BuildPcrSelection/OpenPcrPolicySession/ExtendPcr (Q35Pkg-local, shared with TpmProvisionApp)
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   DebugLib

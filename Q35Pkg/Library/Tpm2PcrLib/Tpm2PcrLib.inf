@@ -1,0 +1,32 @@
+## @file
+#  Provides the PCR selection/session/extend helpers shared by
+#  TpmProvisionApp and TpmVerifyBootApp. See
+#  Include/Library/Tpm2PcrLib.h for details.
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = Tpm2PcrLib
+  FILE_GUID                      = 5b6e8c0a-4d2f-4b3a-9e6c-8f1a2d3b4c5e
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = Tpm2PcrLib
+
+[Sources]
+  Tpm2PcrLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SecurityPkg/SecurityPkg.dec
+  Q35Pkg/Q35Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  DebugLib
+  Tpm2CommandLib
+  Tpm2DeviceLib
+
+[Protocols]
+  gEfiTcg2ProtocolGuid                   ## CONSUMES

@@ -122,7 +122,10 @@ demonstrate.
 1. Measure ROM → extend PCR[16]. *(reuse `ExtendPcr16` — factor it out of
    `TpmProvisionApp.c` into something shared, or duplicate for now and
    factor later — don't over-engineer this before it's needed twice for
-   real.)*
+   real.)* — **update:** duplicated for a while as predicted, then factored
+   into `Q35Pkg/Library/Tpm2PcrLib` (`BuildPcrSelection`/
+   `OpenPcrPolicySession`/`ExtendPcr`, the last now generic over PCR index)
+   once both apps needed it for real. See issue #8.
 2. Open a **real** policy session, `Tpm2PolicyPCR`.
 3. `Tpm2NvRead` using that session.
    - Succeeds → PCR[16] matches what was locked in → print secret →

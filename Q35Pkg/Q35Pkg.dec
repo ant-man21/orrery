@@ -21,3 +21,8 @@
   ## so upstream has no wrapper for it). Kept here instead of patching
   ## edk2/ directly.
   Tpm2PolicyPcrLib|Include/Library/Tpm2PolicyPcrLib.h
+
+  ## PCR selection/session/extend helpers shared between TpmProvisionApp
+  ## and TpmVerifyBootApp (previously duplicated byte-for-byte — see
+  ## issue #8).
+  Tpm2PcrLib|Include/Library/Tpm2PcrLib.h
