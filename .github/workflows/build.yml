@@ -1,0 +1,44 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [q35, arm-virt]
+    steps:
+      - name: Checkout orrery
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # Only the nested edk2 submodules Q35Pkg/ArmVirt.dsc actually need —
+      # not `recursive`, which would also pull unrelated multi-hundred-MB
+      # trees (libspdm's vendored mbedtls/openssl, TCG's reference TPM, unit
+      # test frameworks) that this project's DSCs never build against.
+      - name: Init required edk2 submodules
+        run: |
+          git -C edk2 submodule update --init \
+            MdePkg/Library/MipiSysTLib/mipisyst \
+            MdeModulePkg/Library/BrotliCustomDecompressLib/brotli \
+            MdePkg/Library/BaseFdtLib/libfdt
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential uuid-dev iasl nasm python3 \
+            gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu
+
+      - name: Build BaseTools
+        run: make -C edk2/BaseTools -j"$(nproc)"
+
+      - name: Build firmware (${{ matrix.chip }})
+        run: ./Q35Pkg/build.sh -r -c ${{ matrix.chip }} -S

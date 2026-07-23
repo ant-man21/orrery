@@ -64,10 +64,12 @@ fi
 source "$CHIP_CONF"
 
 case "$ARCH" in
-    X64)    export GCC_BIN=/usr/bin/x86_64-linux-gnu-   ;;
-    AARCH64)export GCC_BIN=/usr/bin/aarch64-linux-gnu-  ;;
-    ARM)    export GCC_BIN=/usr/bin/arm-linux-gnueabihf- ;;
+    X64)    export GCC_BIN=/usr/bin/x86_64-linux-gnu-             ;;
+    AARCH64)export GCC_AARCH64_PREFIX=/usr/bin/aarch64-linux-gnu- ;;
+    ARM)    export GCC_ARM_PREFIX=/usr/bin/arm-linux-gnueabihf-   ;;
 esac
+# NOTE: EDK2's GCC toolchain family only reads GCC_BIN for X64/IA32 — cross
+# targets need their own *_PREFIX env var (see BaseTools/Conf/tools_def.template).
 # Expected variables from chip.conf:
 #   ARCH, TOOLCHAIN, DSC, OUTPUT_DIR
 
