@@ -19,16 +19,34 @@ jobs:
         with:
           submodules: true
 
-      # Only the nested edk2 submodules Q35Pkg/ArmVirt.dsc actually need —
-      # not `recursive`, which would also pull unrelated multi-hundred-MB
-      # trees (libspdm's vendored mbedtls/openssl, TCG's reference TPM, unit
-      # test frameworks) that this project's DSCs never build against.
+      # Only the nested edk2 submodules BaseTools/Q35Pkg/ArmVirt.dsc actually
+      # need — not `recursive`, which would also pull unrelated multi-hundred-MB
+      # trees (libspdm's own vendored mbedtls/openssl/wycheproof/etc., TCG's
+      # reference TPM, unit test frameworks) that this project's DSCs never
+      # build against. This exact list was verified against a clean checkout,
+      # not just a locally-already-populated sandbox — the .dec files below
+      # fail workspace validation without each of these, whether or not the
+      # corresponding library is actually linked into our components:
+      #   - MdePkg.dec            -> MipiSysTLib/mipisyst
+      #   - MdeModulePkg.dec      -> BrotliCustomDecompressLib/brotli
+      #   - BaseTools' own build  -> Source/C/BrotliCompress/brotli (brotli
+      #                              is vendored twice, at two different paths)
+      #   - MdePkg/BaseFdtLib.inf -> BaseFdtLib/libfdt (ArmVirt only, but
+      #                              cheap enough to always init)
+      #   - CryptoPkg.dec         -> OpensslLib/openssl + MbedTlsLib/mbedtls
+      #   - SecurityPkg.dec       -> DeviceSecurity/SpdmLib/libspdm (just the
+      #                              top-level repo — its own nested
+      #                              submodules aren't needed here)
       - name: Init required edk2 submodules
         run: |
           git -C edk2 submodule update --init \
             MdePkg/Library/MipiSysTLib/mipisyst \
             MdeModulePkg/Library/BrotliCustomDecompressLib/brotli \
-            MdePkg/Library/BaseFdtLib/libfdt
+            BaseTools/Source/C/BrotliCompress/brotli \
+            MdePkg/Library/BaseFdtLib/libfdt \
+            CryptoPkg/Library/OpensslLib/openssl \
+            CryptoPkg/Library/MbedTlsLib/mbedtls \
+            SecurityPkg/DeviceSecurity/SpdmLib/libspdm
 
       - name: Install build dependencies
         run: |
