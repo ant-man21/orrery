@@ -24,6 +24,7 @@
 [LibraryClasses.common.UEFI_APPLICATION]
   Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
   Tpm2PolicyPcrLib|Q35Pkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
+  Tpm2PcrLib|Q35Pkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
 
 ## -----------------------------------------------------------------------------
 ## Q35Pkg drivers — add new INFs here as you build them
