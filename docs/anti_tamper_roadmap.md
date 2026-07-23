@@ -17,11 +17,14 @@ conversation doesn't need this project's full history to be productive.
 - **`TpmProvisionApp`** (`Q35Pkg/Drivers/TpmProvisionApp/`) — UEFI application,
   run manually from the shell (`fs1:\apps\TpmProvisionApp.efi`). Implements
   the full "Setup First Boot" flow: locate `EFI_TCG2_PROTOCOL`, print
-  capabilities, snapshot the running ROM (OVMF flash at `0xFFC00000`, 4MB)
-  and extend PCR[16] with its hash, compute the PCR[16] policy digest via a
-  trial session, define an NV index gated on that policy, and write the
-  secret into it via a real policy session. Meant to run once, against a
-  wiped/clean TPM.
+  capabilities, snapshot the running ROM (flash-resident firmware volumes
+  located dynamically via `EFI_FIRMWARE_VOLUME2_PROTOCOL` +
+  `EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL` — see issue #7; this also means the
+  mutable NV variable store is no longer swept up into the measurement,
+  since it isn't published as a firmware volume) and extend PCR[16] with
+  its hash, compute the PCR[16] policy digest via a trial session, define
+  an NV index gated on that policy, and write the secret into it via a
+  real policy session. Meant to run once, against a wiped/clean TPM.
 - **`TpmVerifyBootApp`** (`Q35Pkg/Drivers/TpmVerifyBootApp/`) — companion app,
   implements the full "Reboot / Verify" flow: measure the live ROM, extend
   PCR[16], open a real policy session, and read the secret back out of the
