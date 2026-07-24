@@ -53,6 +53,8 @@
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
+  gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (locate flash-resident FVs — issue #7)
+  gEfiFirmwareVolumeBlock2ProtocolGuid   ## CONSUMES  (get each FV's physical base address)
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

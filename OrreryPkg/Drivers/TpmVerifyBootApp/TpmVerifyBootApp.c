@@ -32,7 +32,11 @@
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
 
+#include <Pi/PiFirmwareFile.h>
+#include <Pi/PiFirmwareVolume.h>
 #include <Protocol/Tcg2Protocol.h>
+#include <Protocol/FirmwareVolume2.h>
+#include <Protocol/FirmwareVolumeBlock.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
@@ -48,26 +52,117 @@
 
 EFI_TCG2_PROTOCOL  *Tcg2;
 
-/* ── helper: read current ROM from flash ───────────────────────────────── */
+/* ── helper: read current ROM from flash ───────────────────────────────── *
+ * Locates flash-resident firmware volumes via EFI_FIRMWARE_VOLUME2_PROTOCOL
+ * instead of hardcoding OVMF's fixed 0xFFC00000 base — real hardware won't
+ * have a static, known-in-advance flash address (issue #7).
+ *
+ * Not every FV2 handle is backed by actual flash: a volume decompressed
+ * into RAM (e.g. PEIFV/DXEFV, unpacked from FVMAIN_COMPACT) also shows up
+ * here but has no EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL on its handle, since
+ * there's no physical block device behind it. Only volumes with both
+ * protocols are real flash content, which is what we want to measure — a
+ * decompressed RAM copy isn't "the ROM."
+ *
+ * This also naturally excludes the NV variable store: it's raw NVRAM (no
+ * FV header, no file system), so it never shows up as an FV2 handle at
+ * all, unlike the old hardcoded 4MB read, which pulled in the mutable
+ * variable store alongside the actual firmware code.
+ */
 STATIC EFI_STATUS
 ReadRomImage (
   OUT VOID   **RomBuffer,
   OUT UINTN   *RomSize
   )
 {
-  /*
-   * OVMF maps its 4 MB flash at 0xFFC00000 on X64.
-   * We just snapshot that range directly — no FV2 protocol needed.
-   */
-  VOID   *FlashBase = (VOID *)(UINTN)0xFFC00000; // TODO for real hardware, use FV2 protocol to locate the flash volume instead of hardcoding this address
-  UINTN   FlashSize = SIZE_4MB;
+  EFI_STATUS             Status;
+  EFI_HANDLE              *Handles;
+  UINTN                   NumHandles;
+  UINTN                   Index;
+  UINTN                   FvCount;
+  UINT64                  TotalFvBytes;
+  EFI_PHYSICAL_ADDRESS    LowestAddress;
+  EFI_PHYSICAL_ADDRESS    HighestEnd;
 
-  *RomBuffer = AllocateCopyPool (FlashSize, FlashBase);
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiFirmwareVolume2ProtocolGuid,
+                  NULL,
+                  &NumHandles,
+                  &Handles
+                  );
+  if (EFI_ERROR (Status) || (NumHandles == 0)) {
+    Print (L"[VERIFY] No firmware volumes found: %r\n", Status);
+    return EFI_ERROR (Status) ? Status : EFI_NOT_FOUND;
+  }
+
+  FvCount       = 0;
+  TotalFvBytes  = 0;
+  LowestAddress = MAX_UINT64;
+  HighestEnd    = 0;
+
+  for (Index = 0; Index < NumHandles; Index++) {
+    EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL  *Fvb;
+    EFI_PHYSICAL_ADDRESS                 FvAddress;
+    EFI_FIRMWARE_VOLUME_HEADER           *FvHeader;
+
+    Status = gBS->HandleProtocol (
+                    Handles[Index],
+                    &gEfiFirmwareVolumeBlock2ProtocolGuid,
+                    (VOID **)&Fvb
+                    );
+    if (EFI_ERROR (Status)) {
+      continue;                 /* not flash-backed — skip */
+    }
+
+    Status = Fvb->GetPhysicalAddress (Fvb, &FvAddress);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    FvHeader = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)FvAddress;
+    FvCount++;
+    TotalFvBytes += FvHeader->FvLength;
+    if (FvAddress < LowestAddress) {
+      LowestAddress = FvAddress;
+    }
+
+    if (FvAddress + FvHeader->FvLength > HighestEnd) {
+      HighestEnd = FvAddress + FvHeader->FvLength;
+    }
+  }
+
+  FreePool (Handles);
+
+  if (FvCount == 0) {
+    Print (L"[VERIFY] No flash-backed firmware volumes found\n");
+    return EFI_NOT_FOUND;
+  }
+
+  /*
+   * Q35Pkg's FDF packs the flash-resident FVs (FVMAIN_COMPACT + SECFV)
+   * back-to-back with no gap, so the merged [lowest, highest) span should
+   * exactly equal the sum of the individual FV sizes. If it doesn't,
+   * something about the flash layout isn't what this code assumes —
+   * refuse to guess, rather than silently reading whatever sits in a gap.
+   */
+  if (TotalFvBytes != (HighestEnd - LowestAddress)) {
+    Print (L"[VERIFY] Firmware volumes are not contiguous — refusing to read a merged ROM range\n");
+    return EFI_UNSUPPORTED;
+  }
+
+  *RomSize   = (UINTN)(HighestEnd - LowestAddress);
+  *RomBuffer = AllocateCopyPool (*RomSize, (VOID *)(UINTN)LowestAddress);
   if (*RomBuffer == NULL) {
     return EFI_OUT_OF_RESOURCES;
   }
-  *RomSize = FlashSize;
-  Print (L"[VERIFY] ROM snapshot: 0xFFC00000, %u bytes\n", (UINT32)FlashSize);
+
+  Print (
+    L"[VERIFY] ROM snapshot: 0x%lx, %u bytes (%u firmware volume(s))\n",
+    LowestAddress,
+    (UINT32)*RomSize,
+    (UINT32)FvCount
+    );
   return EFI_SUCCESS;
 }
 
