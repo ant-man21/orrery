@@ -3,7 +3,8 @@
 ##
 ## Strategy: include OvmfPkgX64.dsc in full, then append our own components.
 ## OvmfPkgX64.dsc defines all library classes, PCDs, and base components.
-## We add our drivers in a second [Components] block after the include.
+## Our drivers (shared ones from OrreryPkg, plus any q35-only ones) go in a
+## second [Components] block after the include.
 ## =============================================================================
 
 [Defines]
@@ -23,14 +24,14 @@
 
 [LibraryClasses.common.UEFI_APPLICATION]
   Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
-  Tpm2PolicyPcrLib|Q35Pkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
-  Tpm2PcrLib|Q35Pkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
+  Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
+  Tpm2PcrLib|OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
 
 ## -----------------------------------------------------------------------------
-## Q35Pkg drivers — add new INFs here as you build them
+## Shared drivers (OrreryPkg) + any q35-only drivers (Q35Pkg/Drivers, none yet)
 ## -----------------------------------------------------------------------------
 [Components]
-  Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
-  Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
-  Q35Pkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
-  Q35Pkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf
+  OrreryPkg/Drivers/HelloDxe/HelloDxe.inf
+  OrreryPkg/Drivers/HelloDxe2/HelloDxe2.inf
+  OrreryPkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
+  OrreryPkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf

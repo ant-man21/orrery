@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: q35
+            script: Q35Pkg/build.sh
+            args: -r -S
+          - name: arm-virt
+            script: ArmVirtOrreryPkg/build.sh
+            args: -r
+    steps:
+      - name: Checkout orrery
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # Only the nested edk2 submodules the platform DSCs actually need — not
+      # `recursive`, which would also pull unrelated multi-hundred-MB
+      # trees (libspdm's own vendored mbedtls/openssl/wycheproof/etc., TCG's
+      # reference TPM, unit test frameworks) that this project's DSCs never
+      # build against. This exact list was verified against a clean checkout,
+      # not just a locally-already-populated sandbox — the .dec files below
+      # fail workspace validation without each of these, whether or not the
+      # corresponding library is actually linked into our components:
+      #   - MdePkg.dec            -> MipiSysTLib/mipisyst
+      #   - MdeModulePkg.dec      -> BrotliCustomDecompressLib/brotli
+      #   - BaseTools' own build  -> Source/C/BrotliCompress/brotli (brotli
+      #                              is vendored twice, at two different paths)
+      #   - MdePkg/BaseFdtLib.inf -> BaseFdtLib/libfdt (ArmVirt only, but
+      #                              cheap enough to always init)
+      #   - CryptoPkg.dec         -> OpensslLib/openssl + MbedTlsLib/mbedtls
+      #   - SecurityPkg.dec       -> DeviceSecurity/SpdmLib/libspdm (just the
+      #                              top-level repo — its own nested
+      #                              submodules aren't needed here)
+      - name: Init required edk2 submodules
+        run: |
+          git -C edk2 submodule update --init \
+            MdePkg/Library/MipiSysTLib/mipisyst \
+            MdeModulePkg/Library/BrotliCustomDecompressLib/brotli \
+            BaseTools/Source/C/BrotliCompress/brotli \
+            MdePkg/Library/BaseFdtLib/libfdt \
+            CryptoPkg/Library/OpensslLib/openssl \
+            CryptoPkg/Library/MbedTlsLib/mbedtls \
+            SecurityPkg/DeviceSecurity/SpdmLib/libspdm
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential uuid-dev iasl nasm python3 \
+            gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu
+
+      - name: Build BaseTools
+        run: make -C edk2/BaseTools -j"$(nproc)"
+
+      - name: Build firmware (${{ matrix.name }})
+        run: ./${{ matrix.script }} ${{ matrix.args }}

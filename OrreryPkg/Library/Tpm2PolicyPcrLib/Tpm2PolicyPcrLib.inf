@@ -21,7 +21,7 @@
 [Packages]
   MdePkg/MdePkg.dec
   SecurityPkg/SecurityPkg.dec
-  Q35Pkg/Q35Pkg.dec
+  OrreryPkg/OrreryPkg.dec
 
 [LibraryClasses]
   BaseLib

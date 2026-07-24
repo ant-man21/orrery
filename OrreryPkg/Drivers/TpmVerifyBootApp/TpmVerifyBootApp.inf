@@ -12,10 +12,10 @@
 ##
 ## Companion app: TpmProvisionApp (first-boot provisioning flow).
 ##
-## Add to Q35Pkg.dsc under [Components]:
-##   Q35Pkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf
+## Add to a platform DSC (e.g. Q35Pkg.dsc) under [Components]:
+##   OrreryPkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf
 ##
-## Output: Build/<DSC>/<TARGET>_<TOOLCHAIN>/X64/TpmVerifyBootApp.efi
+## Output: Build/<DSC>/<TARGET>_<TOOLCHAIN>/<ARCH>/TpmVerifyBootApp.efi
 ## Run from the UEFI shell as fs1:\apps\TpmVerifyBootApp.efi
 
 [Defines]
@@ -34,7 +34,7 @@
   MdeModulePkg/MdeModulePkg.dec
   SecurityPkg/SecurityPkg.dec
   CryptoPkg/CryptoPkg.dec
-  Q35Pkg/Q35Pkg.dec
+  OrreryPkg/OrreryPkg.dec
 
 [LibraryClasses]
   UefiApplicationEntryPoint       ## provides UefiMain linkage
@@ -45,8 +45,8 @@
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
   Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite …
-  Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (Q35Pkg-local — see its header)
-  Tpm2PcrLib                      ## BuildPcrSelection/OpenPcrPolicySession/ExtendPcr (Q35Pkg-local, shared with TpmProvisionApp)
+  Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (OrreryPkg-local — see its header)
+  Tpm2PcrLib                      ## BuildPcrSelection/OpenPcrPolicySession/ExtendPcr (OrreryPkg-local, shared with TpmProvisionApp)
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   DebugLib

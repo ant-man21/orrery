@@ -14,7 +14,7 @@ conversation doesn't need this project's full history to be productive.
 - **Platform**: custom `Q35Pkg` OVMF build (`Q35Pkg/Q35Pkg.dsc`), built via
   `Q35Pkg/build.sh`, run via `Q35Pkg/qemu.sh`. Host machine runs the x86_64
   guest fully emulated under QEMU/TCG (host is aarch64 — no KVM).
-- **`TpmProvisionApp`** (`Q35Pkg/Drivers/TpmProvisionApp/`) — UEFI application,
+- **`TpmProvisionApp`** (`OrreryPkg/Drivers/TpmProvisionApp/`) — UEFI application,
   run manually from the shell (`fs1:\apps\TpmProvisionApp.efi`). Implements
   the full "Setup First Boot" flow: locate `EFI_TCG2_PROTOCOL`, print
   capabilities, snapshot the running ROM (OVMF flash at `0xFFC00000`, 4MB)
@@ -22,7 +22,7 @@ conversation doesn't need this project's full history to be productive.
   trial session, define an NV index gated on that policy, and write the
   secret into it via a real policy session. Meant to run once, against a
   wiped/clean TPM.
-- **`TpmVerifyBootApp`** (`Q35Pkg/Drivers/TpmVerifyBootApp/`) — companion app,
+- **`TpmVerifyBootApp`** (`OrreryPkg/Drivers/TpmVerifyBootApp/`) — companion app,
   implements the full "Reboot / Verify" flow: measure the live ROM, extend
   PCR[16], open a real policy session, and read the secret back out of the
   NV index — which only succeeds if PCR[16] still matches what was locked
@@ -123,7 +123,7 @@ demonstrate.
    `TpmProvisionApp.c` into something shared, or duplicate for now and
    factor later — don't over-engineer this before it's needed twice for
    real.)* — **update:** duplicated for a while as predicted, then factored
-   into `Q35Pkg/Library/Tpm2PcrLib` (`BuildPcrSelection`/
+   into `OrreryPkg/Library/Tpm2PcrLib` (`BuildPcrSelection`/
    `OpenPcrPolicySession`/`ExtendPcr`, the last now generic over PCR index)
    once both apps needed it for real. See issue #8.
 2. Open a **real** policy session, `Tpm2PolicyPCR`.
