@@ -1,5 +1,5 @@
 ## =============================================================================
-## ArmVirt.dsc — QEMU 'virt' (AArch64) platform description
+## ArmVirtOrreryPkg.dsc — QEMU 'virt' (AArch64) platform description
 ##
 ## Strategy: include ArmVirtQemu.dsc in full, then append our own components.
 ## ArmVirtQemu.dsc defines all library classes, PCDs, and base components,
@@ -8,7 +8,7 @@
 ## =============================================================================
 
 [Defines]
-  PLATFORM_NAME                  = ArmVirt
+  PLATFORM_NAME                  = ArmVirtOrrery
   PLATFORM_GUID                  = 66266d63-b5c9-4cf8-a063-7bdb7b4cf9e2
   PLATFORM_VERSION               = 0.1
   DSC_SPECIFICATION              = 0x00010005
@@ -24,16 +24,18 @@
 
 [LibraryClasses.common.UEFI_APPLICATION]
   Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
-  Tpm2PolicyPcrLib|Q35Pkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
-  Tpm2PcrLib|Q35Pkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
+  Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
+  Tpm2PcrLib|OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
 
 ## -----------------------------------------------------------------------------
-## Q35Pkg drivers — build-verification only. TpmProvisionApp/TpmVerifyBootApp
-## hardcode an X64/OVMF flash address (see their own source comments); they
-## compile clean here but are not wired up to run/boot on this platform yet.
+## Shared drivers (OrreryPkg) — build-verification only. TpmProvisionApp/
+## TpmVerifyBootApp hardcode an X64/OVMF flash address (see their own source
+## comments); they compile clean here but are not wired up to run/boot on
+## this platform yet. Any arm-virt-only drivers would go in
+## ArmVirtOrreryPkg/Drivers instead.
 ## -----------------------------------------------------------------------------
 [Components]
-  Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
-  Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
-  Q35Pkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
-  Q35Pkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf
+  OrreryPkg/Drivers/HelloDxe/HelloDxe.inf
+  OrreryPkg/Drivers/HelloDxe2/HelloDxe2.inf
+  OrreryPkg/Drivers/TpmProvisionApp/TpmProvisionApp.inf
+  OrreryPkg/Drivers/TpmVerifyBootApp/TpmVerifyBootApp.inf

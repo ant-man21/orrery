@@ -1,15 +1,17 @@
 ## =============================================================================
-## Q35Pkg.dec — Q35Pkg package declaration
+## OrreryPkg.dec — OrreryPkg package declaration
 ##
-## Declares LibraryClasses that are implemented locally in Q35Pkg (as opposed
-## to the vendored edk2/ tree), so a `git pull` on edk2/ never has to carry
-## project-specific patches.
+## Shared drivers/libraries used by more than one platform package (Q35Pkg,
+## ArmVirtOrreryPkg, ...). Platform-specific drivers live in their own
+## platform package instead. Declares LibraryClasses that are implemented
+## locally (as opposed to the vendored edk2/ tree), so a `git pull` on edk2/
+## never has to carry project-specific patches.
 ## =============================================================================
 
 [Defines]
   DEC_SPECIFICATION              = 0x00010005
-  PACKAGE_NAME                   = Q35Pkg
-  PACKAGE_GUID                   = 4d7a5e6c-9f21-4b3a-8e6d-2c1f0a9b7d3e
+  PACKAGE_NAME                   = OrreryPkg
+  PACKAGE_GUID                   = a7af8704-b46d-4fba-b1e3-cf71f94becf9
   PACKAGE_VERSION                = 0.1
 
 [Includes]

@@ -3,5 +3,5 @@
 ##
 ## =============================================================================
 
-INF Q35Pkg/Drivers/HelloDxe/HelloDxe.inf
-INF Q35Pkg/Drivers/HelloDxe2/HelloDxe2.inf
+INF OrreryPkg/Drivers/HelloDxe/HelloDxe.inf
+INF OrreryPkg/Drivers/HelloDxe2/HelloDxe2.inf

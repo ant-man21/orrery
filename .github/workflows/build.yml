@@ -7,20 +7,26 @@ on:
 
 jobs:
   build:
-    name: Build (${{ matrix.chip }})
+    name: Build (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        chip: [q35, arm-virt]
+        include:
+          - name: q35
+            script: Q35Pkg/build.sh
+            args: -r -S
+          - name: arm-virt
+            script: ArmVirtOrreryPkg/build.sh
+            args: -r
     steps:
       - name: Checkout orrery
         uses: actions/checkout@v4
         with:
           submodules: true
 
-      # Only the nested edk2 submodules BaseTools/Q35Pkg/ArmVirt.dsc actually
-      # need — not `recursive`, which would also pull unrelated multi-hundred-MB
+      # Only the nested edk2 submodules the platform DSCs actually need — not
+      # `recursive`, which would also pull unrelated multi-hundred-MB
       # trees (libspdm's own vendored mbedtls/openssl/wycheproof/etc., TCG's
       # reference TPM, unit test frameworks) that this project's DSCs never
       # build against. This exact list was verified against a clean checkout,
@@ -58,5 +64,5 @@ jobs:
       - name: Build BaseTools
         run: make -C edk2/BaseTools -j"$(nproc)"
 
-      - name: Build firmware (${{ matrix.chip }})
-        run: ./Q35Pkg/build.sh -r -c ${{ matrix.chip }} -S
+      - name: Build firmware (${{ matrix.name }})
+        run: ./${{ matrix.script }} ${{ matrix.args }}
