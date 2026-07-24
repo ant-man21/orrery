@@ -24,9 +24,9 @@
 #   - No `-debugcon` / isa-debugcon — 'virt' has no ISA bus, so there's no
 #     separate debug I/O port. DEBUG-build prints interleave with the shell
 #     on the same -serial console instead of going to their own debug.log.
-#   - No swtpm/TPM wiring yet: TpmProvisionApp/TpmVerifyBootApp still
-#     hardcode an X64/OVMF flash address (see their source), so there's no
-#     working measured-boot flow on this platform to plug a TPM into yet.
+#   - TPM device is `tpm-tis-device`, not `tpm-tis` — 'virt' has no ISA/LPC
+#     bus, so the TIS interface is exposed as a sysbus MMIO device instead
+#     of the ISA one Q35 uses. Same swtpm backend either way.
 #   - fs0:'s uefi-shell.img must be an AArch64 UEFI Shell image — the X64
 #     one from Q35Pkg will not boot here. Provide your own at
 #     ArmVirtOrreryPkg/uefi-shell.img (gitignored, same as Q35Pkg's).
@@ -140,6 +140,22 @@ if [[ "$RESET_SHARED" -eq 1 || ! -f "$SHARED_IMG" ]]; then
     rebuild_shared_img
 fi
 
+# ---------- swtpm -------------------------------------------------------------
+SWTPM_DIR="$SCRIPT_DIR/tpm"
+mkdir -p "$SWTPM_DIR"
+
+# kill any leftover swtpm from a previous run
+pkill -f "swtpm socket.*$SWTPM_DIR" 2>/dev/null || true
+sleep 0.2
+
+swtpm socket \
+    --tpmstate dir="$SWTPM_DIR" \
+    --ctrl type=unixio,path=/tmp/swtpm-sock-armvirt \
+    --tpm2 \
+    --daemon
+
+echo "→ swtpm started, state in $SWTPM_DIR"
+
 # ---------- launch ------------------------------------------------------------
 echo "============================================================"
 echo "  Platform  : ArmVirt  ($QEMU_MACHINE)"
@@ -166,5 +182,9 @@ qemu-system-aarch64 \
     -net none \
     -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio \
     -drive file="$SHARED_IMG",format=raw,if=virtio \
+    \
+    -chardev socket,id=chrtpm,path=/tmp/swtpm-sock-armvirt \
+    -tpmdev emulator,id=tpm0,chardev=chrtpm \
+    -device tpm-tis-device,tpmdev=tpm0 \
     \
     "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
