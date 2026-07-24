@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with Q35 firmware
-# Usage: ./qemu.sh [-r|-d] [-c CHIP] [-m MEM] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
-#   -c CHIP         Chip target                 (default: q35)
 #   -m MEM          RAM in MB                   (default: 512)
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
@@ -22,9 +21,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDK2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ---------- defaults ----------------------------------------------------------
+# ---------- platform (fixed — this script only runs Q35Pkg) -------------------
+TOOLCHAIN="GCC"
+OUTPUT_DIR="Build/OvmfX64"
+QEMU_MACHINE="q35"
+QEMU_CPU="max"
+
+# ---------- defaults ------------------------------------------------------
 BUILD_TYPE="RELEASE"
-CHIP="q35"
 MEM_MB=512
 RESET_SHARED=0
 
@@ -38,7 +42,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -r)             BUILD_TYPE="RELEASE"; shift ;;
         -d)             BUILD_TYPE="DEBUG";   shift ;;
-        -c)             CHIP="$2";            shift 2 ;;
         -m)             MEM_MB="$2";          shift 2 ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
@@ -46,17 +49,6 @@ while [[ $# -gt 0 ]]; do
          *)             echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
-
-# ---------- load chip config --------------------------------------------------
-CHIP_CONF="$SCRIPT_DIR/chips/$CHIP/chip.conf"
-if [[ ! -f "$CHIP_CONF" ]]; then
-    echo "ERROR: No chip config found at $CHIP_CONF"
-    echo "Available chips:"
-    ls "$SCRIPT_DIR/chips/" 2>/dev/null | sed 's/^/  /'
-    exit 1
-fi
-# shellcheck source=/dev/null
-source "$CHIP_CONF"
 
 FV_DIR="$EDK2_DIR/$OUTPUT_DIR/${BUILD_TYPE}_${TOOLCHAIN}/FV"
 CODE_FD="$FV_DIR/OVMF_CODE.fd"
@@ -80,7 +72,7 @@ if [[ ! -f "$CODE_FD" ]]; then
 fi
 
 # ---------- writable VARS copy ------------------------------------------------
-VARS_DIR="$SCRIPT_DIR/chips/$CHIP/vars"
+VARS_DIR="$SCRIPT_DIR/chips/q35/vars"
 mkdir -p "$VARS_DIR"
 VARS_FD="$VARS_DIR/OVMF_VARS_${BUILD_TYPE}.fd"
 if [[ ! -f "$VARS_FD" ]]; then
@@ -137,7 +129,7 @@ if [[ "$RESET_SHARED" -eq 1 || ! -f "$SHARED_IMG" ]]; then
 fi
 
 # ---------- swtpm -------------------------------------------------------------
-SWTPM_DIR="$SCRIPT_DIR/chips/$CHIP/tpm"
+SWTPM_DIR="$SCRIPT_DIR/chips/q35/tpm"
 mkdir -p "$SWTPM_DIR"
 
 # kill any leftover swtpm from a previous run
@@ -153,9 +145,8 @@ swtpm socket \
 echo "→ swtpm started, state in $SWTPM_DIR"
 
 # ---------- launch ------------------------------------------------------------
-QEMU_CPU="${QEMU_CPU:-max}"
 echo "============================================================"
-echo "  Chip      : $CHIP  ($QEMU_MACHINE)"
+echo "  Platform  : Q35  ($QEMU_MACHINE)"
 echo "  Build     : $BUILD_TYPE"
 echo "  CPU       : $QEMU_CPU"
 echo "  RAM       : ${MEM_MB}M"
