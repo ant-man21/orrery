@@ -8,4 +8,9 @@ Q35Pkg/uefi-shell.img
 Q35Pkg/shared/
 Q35Pkg/uefi-shell.iso
 Q35Pkg/Q35Pkg,fdf
+ArmVirtOrreryPkg/vars/
+ArmVirtOrreryPkg/tpm/
+ArmVirtOrreryPkg/uefi-shell.img
+ArmVirtOrreryPkg/uefi-shell.iso
+ArmVirtOrreryPkg/shared/
 shared.img
