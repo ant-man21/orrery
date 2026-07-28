@@ -14,7 +14,7 @@ ArmVirtOrreryPkg/uefi-shell.img
 ArmVirtOrreryPkg/uefi-shell.iso
 ArmVirtOrreryPkg/shared/
 shared.img
-
+OrreryPkg/Include/TrustedUpdateKey.h
 # Update-signing private key — never commit. Only the .pem private key is
 # secret; the generated public-key header (OrreryPkg/Include/TrustedUpdateKey.h)
 # is meant to ship in firmware and is NOT excluded here.

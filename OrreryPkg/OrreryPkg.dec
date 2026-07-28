@@ -35,3 +35,8 @@
   ## Runtime discovery (FV2/FVB2 enumeration, GCD memory type) proved
   ## unreliable on both existing platforms — see docs/rom_discovery_story.md.
   PlatformRomInfoLib|Include/Library/PlatformRomInfoLib.h
+  
+  ## TPM2_LoadExternal / TPM2_VerifySignature / TPM2_PolicyAuthorize —
+  ## same gap as Tpm2PolicyPcrLib above: SecurityPkg's Tpm2CommandLib
+  ## doesn't provide these either. Signed-ticket reprovisioning — issue #15.
+  Tpm2PolicyAuthorizeLib|Include/Library/Tpm2PolicyAuthorizeLib.h
