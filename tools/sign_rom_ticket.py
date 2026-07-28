@@ -162,10 +162,10 @@ def main() -> None:
     print(f"signature       : {len(signature)} bytes, self-check OK")
     print(f"ticket written  : {args.out}")
     print()
-    print("NOTE: build.sh does not currently push Q35Pkg/shared/data/ onto")
-    print("shared.img (it only auto-syncs shared/apps/). To get this ticket")
-    print("onto the image for a boot test:")
-    print(f'  mcopy -o -i Q35Pkg/shared.img "{args.out}" ::data/rom.ticket')
+    print("Q35Pkg/build.sh runs this automatically after each build and pushes")
+    print("the ticket onto shared.img (fs1:\\data\\rom.ticket) alongside the")
+    print("synced apps — no manual step needed unless you're signing a ROM")
+    print("outside the normal build flow.")
 
 
 if __name__ == "__main__":

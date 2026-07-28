@@ -15,6 +15,12 @@ Generates the RSA-2048 update-signing keypair:
     already-provisioned device's vault (see the key-rotation caveat in
     issue #15 / the design doc).
 
+Requirements:
+  - Python 3 (stdlib only — no pip packages needed)
+  - `openssl` on PATH (any reasonably recent build; this was developed
+    against OpenSSL 3.0.13). That's the only external dependency — see
+    below for why this doesn't use Python's `cryptography` package.
+
 Shells out to `openssl` rather than using the `cryptography` package —
 the latter's Rust bindings are broken in this environment
 (ModuleNotFoundError: _cffi_backend / pyo3 panic on import). openssl is
