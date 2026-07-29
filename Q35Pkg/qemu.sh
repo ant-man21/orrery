@@ -122,10 +122,16 @@ rebuild_shared_img() {
     echo "→ shared.img ready"
 }
 
-# rebuild shell image
-
 if [[ "$RESET_SHARED" -eq 1 || ! -f "$SHARED_IMG" ]]; then
     rebuild_shared_img
+fi
+
+# ---------- uefi shell image (fs0:) --------------------------------------------
+# uefi-shell.img is gitignored — build it on first run (or if it's missing)
+# so it's always there without a manual step.
+UEFI_SHELL_IMG="$SCRIPT_DIR/uefi-shell.img"
+if [[ ! -f "$UEFI_SHELL_IMG" ]]; then
+    "$SCRIPT_DIR/make-uefi-shell-img.sh"
 fi
 
 # ---------- swtpm -------------------------------------------------------------
