@@ -131,7 +131,7 @@ fi
 # so it's always there without a manual step.
 UEFI_SHELL_IMG="$SCRIPT_DIR/uefi-shell.img"
 if [[ ! -f "$UEFI_SHELL_IMG" ]]; then
-    "$SCRIPT_DIR/make-uefi-shell-img.sh"
+    "$SCRIPT_DIR/../tools/make-uefi-shell-img.sh"
 fi
 
 # ---------- swtpm -------------------------------------------------------------

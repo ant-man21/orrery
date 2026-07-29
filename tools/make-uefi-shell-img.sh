@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # make-uefi-shell-img.sh — build Q35Pkg/uefi-shell.img (X64 UEFI Shell, fs0:)
-# Usage: ./make-uefi-shell-img.sh [-f]
+# Usage: ./tools/make-uefi-shell-img.sh [-f]
 #
 #   -f    Force rebuild even if uefi-shell.img already exists
 #   -h    Show this help
@@ -17,13 +17,14 @@
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EDK2_DIR="$(cd "$SCRIPT_DIR/../edk2" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+EDK2_DIR="$(cd "$REPO_ROOT/edk2" && pwd)"
 
 ARCH="X64"
 TOOLCHAIN="GCC"
 BUILD_TYPE="RELEASE"
 DSC="ShellPkg/ShellPkg.dsc"
-SHELL_IMG="$SCRIPT_DIR/uefi-shell.img"
+SHELL_IMG="$REPO_ROOT/Q35Pkg/uefi-shell.img"
 SHELL_IMG_SIZE_MB=64
 export GCC_BIN=/usr/bin/x86_64-linux-gnu-
 
