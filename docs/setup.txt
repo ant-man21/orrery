@@ -36,3 +36,31 @@ Your Computer
 └── QEMU (pretends to be hardware)
     └── OVMF (pretends to be the UEFI firmware)
         └── Your OS or UEFI app
+
+# Windows/WSL2 vs native Ubuntu host — QEMU version gotcha
+#
+# Works on WSL2 out of the box because Windows-side QEMU installs (or WSL2's
+# own repos) tend to already be QEMU 8+. Ubuntu 22.04's `apt` QEMU is stuck at
+# 6.2, which trips OVMF's deliberate assert in PlatformInitLib/Platform.c
+# ("broken CPU hotplug register block", fixed upstream in QEMU 8.0 — see
+# tianocore bug 4250). If `qemu.sh` hangs/asserts on a fresh native Ubuntu
+# box, you're almost certainly hitting this — build QEMU 9.2.4+ from source:
+#
+#   sudo apt install ninja-build meson pkg-config libglib2.0-dev \
+#     libpixman-1-dev libfdt-dev libslirp-dev python3-venv flex bison \
+#     libcap-ng-dev libseccomp-dev libgtk-3-dev python3-tomli
+#
+#   curl -LO https://download.qemu.org/qemu-9.2.4.tar.xz
+#   tar xf qemu-9.2.4.tar.xz && cd qemu-9.2.4
+#   mkdir build && cd build
+#   ../configure --prefix="$HOME/.local/qemu-9.2.4" \
+#     --target-list=x86_64-softmmu,aarch64-softmmu --enable-gtk --enable-slirp
+#   ninja -j"$(nproc)" && ninja install
+#
+# No sudo needed for the build/install itself (prefix lives under $HOME) —
+# only the apt line above needs it. Both qemu.sh scripts auto-detect a build
+# at ~/.local/qemu-9.2.4/bin/ and prefer it over PATH, so your distro's
+# packaged QEMU is left alone.
+#
+# Versions in use as of this writing: Ubuntu 22.04 LTS host, edk2 @ 366864b2
+# (2026-07-24), QEMU 9.2.4 (local build) vs 6.2 (Ubuntu package, broken).

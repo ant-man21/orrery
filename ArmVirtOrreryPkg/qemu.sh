@@ -41,6 +41,14 @@ OUTPUT_DIR="Build/ArmVirtQemu-AArch64"
 QEMU_MACHINE="virt"
 QEMU_CPU="max"
 
+# Ubuntu 22.04's packaged QEMU (6.2) hits OVMF's "broken CPU hotplug register
+# block" assert (fixed in QEMU 8+, see tianocore bug 4250). Prefer a locally
+# built QEMU 9.2.4 at ~/.local/qemu-9.2.4 if present, else fall back to PATH.
+QEMU_BIN="qemu-system-aarch64"
+if [[ -x "$HOME/.local/qemu-9.2.4/bin/qemu-system-aarch64" ]]; then
+    QEMU_BIN="$HOME/.local/qemu-9.2.4/bin/qemu-system-aarch64"
+fi
+
 # ---------- defaults ------------------------------------------------------
 BUILD_TYPE="RELEASE"
 MEM_MB=512
@@ -169,7 +177,7 @@ echo "  Host dir  : $SHARED_DIR"
 echo "============================================================"
 echo ""
 
-qemu-system-aarch64 \
+"$QEMU_BIN" \
     -machine "$QEMU_MACHINE" \
     -cpu "$QEMU_CPU" \
     -m "${MEM_MB}M" \
