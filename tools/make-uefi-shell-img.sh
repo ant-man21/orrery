@@ -82,9 +82,13 @@ build \
     -p "$DSC" \
     -n "$(nproc)"
 
-SHELL_EFI="$WORKSPACE/Build/Shell/${BUILD_TYPE}_${TOOLCHAIN}/$ARCH/Shell.efi"
-if [[ ! -f "$SHELL_EFI" ]]; then
-    echo "ERROR: build succeeded but Shell.efi not found at $SHELL_EFI" >&2
+# Shell.efi isn't at a flat <ARCH>/Shell.efi path — it's nested under the
+# module's own (per-build) GUID directory, e.g.:
+#   Build/Shell/RELEASE_GCC/X64/ShellPkg/Application/Shell/<GUID>/OUTPUT/Shell.efi
+BUILD_ARCH_DIR="$WORKSPACE/Build/Shell/${BUILD_TYPE}_${TOOLCHAIN}/$ARCH"
+SHELL_EFI="$(find "$BUILD_ARCH_DIR" -path "*/OUTPUT/Shell.efi" 2>/dev/null | head -1)"
+if [[ -z "$SHELL_EFI" || ! -f "$SHELL_EFI" ]]; then
+    echo "ERROR: build succeeded but Shell.efi not found under $BUILD_ARCH_DIR" >&2
     exit 1
 fi
 
