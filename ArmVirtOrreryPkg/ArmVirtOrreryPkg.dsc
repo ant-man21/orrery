@@ -27,6 +27,7 @@
   Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
   Tpm2PcrLib|OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
   PlatformRomInfoLib|OrreryPkg/Library/PlatformRomInfoLibArmVirt/PlatformRomInfoLibArmVirt.inf
+  Tpm2PolicyAuthorizeLib|OrreryPkg/Library/Tpm2PolicyAuthorizeLib/Tpm2PolicyAuthorizeLib.inf
 
 ## -----------------------------------------------------------------------------
 ## Shared drivers (OrreryPkg). TpmProvisionApp/TpmVerifyBootApp get their
