@@ -228,3 +228,31 @@ sandbox — no `qemu-system-x86_64` there to boot-test Q35). Awaiting a real
 QEMU run on both platforms — this is the third attempt at this bug, so
 "builds clean" is being stated plainly, not as a substitute for the actual
 verification still owed.
+
+## 10. Confirmed on real hardware/QEMU — both platforms, exactly as predicted
+
+    ArmVirt: base=0x1000      size=0x2FF000  <- predicted 0x1000/0x2FF000, exact match
+    Q35:     base=0xFFC84000  size=0x37C000  <- predicted 0xFFC84000/0x37C000, exact match
+
+ArmVirt ran the complete flow end to end: ROM measured, PCR[16] extended,
+NV index defined, secret sealed — `TpmProvisionApp done (Success)`. That's
+the actual bug (issue from section 3) confirmed fixed, not just "it builds."
+
+Q35 measured the ROM correctly (right address, PCR[16] extended) but then
+hit `Tpm2NvDefineSpace failed: Device Error` — a different, unrelated
+failure. Almost certainly TPM2 dictionary-attack lockout: Q35's swtpm state
+directory (`Q35Pkg/chips/q35/tpm`) persisted across every test run made
+during this investigation, each producing a different PCR[16] (different
+build → different ROM bytes), so earlier NV-index policy checks kept
+failing against a stale sealed policy — repeated auth/policy failures are
+exactly what trips TPM2 lockout, after which unrelated commands start
+failing generically. Not a `PlatformRomInfoLib` bug; the ROM address it
+resolved was correct. Needs a wipe of that swtpm directory and a clean
+re-test to confirm.
+
+Three rounds to get here (fixed address → FV2 lookup → GCD memory type →
+PlatformRomInfoLib), each wrong in a different, non-obvious way that only
+showed up under real testing rather than reasoning from source. Worth
+remembering next time "the discovery mechanism" is tempting to reach for
+runtime protocol introspection instead of the build-time PCD every
+platform already has correct.
