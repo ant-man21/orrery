@@ -22,9 +22,11 @@
  */
 
 #include <Uefi.h>
+#include <Pi/PiDxeCis.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/DxeServicesTableLib.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
@@ -58,24 +60,30 @@ EFI_TCG2_PROTOCOL  *Tcg2;
  * instead of hardcoding OVMF's fixed 0xFFC00000 base — real hardware won't
  * have a static, known-in-advance flash address (issue #7).
  *
- * Not every FV2 handle is backed by actual flash: a volume decompressed
- * into RAM (e.g. PEIFV/DXEFV, unpacked from FVMAIN_COMPACT) also shows up
- * here but has no EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL on its handle, since
- * there's no physical block device behind it. Only volumes with both
- * protocols are real flash content, which is what we want to measure — a
- * decompressed RAM copy isn't "the ROM."
+ * "Has EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL with a working GetPhysicalAddress"
+ * is NOT a reliable "this is real flash" test — verified wrong on both
+ * platforms (see docs/rom_discovery_story.md for the full trail). DXE Core's
+ * generic FwVolBlock driver installs that exact same protocol combination
+ * for any FV that was handed off via a HOB too, including a GUIDed section
+ * decompressed straight into a pool allocation (e.g. ArmVirtQemu's FvMain,
+ * or Q35's DXEFV) — there is nothing about FVB2 presence that implies actual
+ * block-device/flash backing.
  *
- * The NV variable store must also be excluded explicitly, by FileSystemGuid
- * (gEfiSystemNvDataFvGuid): on Q35 it happens to never show up as an FV2
- * handle at all, but on ArmVirtQemu the vars pflash chip *is* formatted as
- * a valid FV (see ArmVirtPkg/VarStore.fdf.inc) and VirtNorFlashDxe exposes
- * FVB2 on it, so it gets wrapped into EFI_FIRMWARE_VOLUME2_PROTOCOL like
- * any other flash-resident FV. Left in, it would pull in a second FV that
- * sits in a completely separate pflash bank from the code FV (CODE and
- * VARS are two distinct -pflash devices, not one contiguous range), which
- * is exactly what trips the contiguity check below — and even if it
- * didn't, NVRAM contents change every boot and have no business being
- * measured into PCR[16] as "the ROM" anyway.
+ * What's actually authoritative: QemuFlashFvbServicesRuntimeDxe (Q35) and
+ * VirtNorFlashDxe (ArmVirt) both register their real flash windows with
+ * gDS->AddMemorySpace(EfiGcdMemoryTypeMemoryMappedIo, ...) — that's the GCD
+ * (DXE Services / Global Coherency Domain) memory space map, a lower-level,
+ * more complete map than gBS->GetMemoryMap() (which only covers "system
+ * memory" and won't list pure MMIO at all — confirmed via the shell's
+ * `memmap` command finding no entry for Q35's flash). A pool-allocated
+ * decompressed FV, by contrast, always lives in EfiGcdMemoryTypeSystemMemory.
+ * So: keep only FVs whose physical address's GCD type is
+ * EfiGcdMemoryTypeMemoryMappedIo.
+ *
+ * The NV variable store is additionally excluded by FileSystemGuid
+ * (gEfiSystemNvDataFvGuid) as a belt-and-suspenders check — its contents
+ * change every boot and have no business being measured into PCR[16] as
+ * "the ROM," independent of whether it happens to be GCD-typed as MMIO.
  */
 STATIC EFI_STATUS
 ReadRomImage (
@@ -109,10 +117,15 @@ ReadRomImage (
   LowestAddress = MAX_UINT64;
   HighestEnd    = 0;
 
+  Print (L"[VERIFY] %u total EFI_FIRMWARE_VOLUME2_PROTOCOL handle(s)\n", (UINT32)NumHandles);
+
   for (Index = 0; Index < NumHandles; Index++) {
     EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL  *Fvb;
     EFI_PHYSICAL_ADDRESS                 FvAddress;
     EFI_FIRMWARE_VOLUME_HEADER           *FvHeader;
+    EFI_GCD_MEMORY_SPACE_DESCRIPTOR      GcdDescriptor;
+    BOOLEAN                              IsMmio;
+    BOOLEAN                              IsNvram;
 
     Status = gBS->HandleProtocol (
                     Handles[Index],
@@ -120,17 +133,25 @@ ReadRomImage (
                     (VOID **)&Fvb
                     );
     if (EFI_ERROR (Status)) {
-      continue;                 /* not flash-backed — skip */
+      Print (L"[VERIFY]   handle %u: no FVB2 protocol — skipped\n", (UINT32)Index);
+      continue;
     }
 
     Status = Fvb->GetPhysicalAddress (Fvb, &FvAddress);
     if (EFI_ERROR (Status)) {
+      Print (L"[VERIFY]   handle %u: FVB2 GetPhysicalAddress failed: %r — skipped\n", (UINT32)Index, Status);
       continue;
     }
 
     FvHeader = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)FvAddress;
+
+    Status = gDS->GetMemorySpaceDescriptor (FvAddress, &GcdDescriptor);
+    IsMmio  = !EFI_ERROR (Status) && (GcdDescriptor.GcdMemoryType == EfiGcdMemoryTypeMemoryMappedIo);
+    IsNvram = CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid);
+
     Print (
-      L"[VERIFY] flash-backed FV: addr=0x%lx size=0x%lx guid=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x%a\n",
+      L"[VERIFY]   handle %u: addr=0x%lx size=0x%lx guid=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x gcdType=%d%a%a\n",
+      (UINT32)Index,
       FvAddress,
       FvHeader->FvLength,
       FvHeader->FileSystemGuid.Data1,
@@ -144,11 +165,13 @@ ReadRomImage (
       FvHeader->FileSystemGuid.Data4[5],
       FvHeader->FileSystemGuid.Data4[6],
       FvHeader->FileSystemGuid.Data4[7],
-      CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid) ? " (NVRAM, excluded)" : ""
+      EFI_ERROR (Status) ? -1 : (INT32)GcdDescriptor.GcdMemoryType,
+      IsMmio ? " (MMIO)" : " (not MMIO, skipped)",
+      IsNvram ? " (NVRAM, skipped)" : ""
       );
 
-    if (CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid)) {
-      continue;                 /* NV variable store — not "the ROM" */
+    if (!IsMmio || IsNvram) {
+      continue;                 /* RAM copy or NV variable store — not "the ROM" */
     }
 
     FvCount++;

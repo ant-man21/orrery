@@ -42,6 +42,7 @@
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
   UefiRuntimeServicesTableLib     ## gRT (for later phases)
+  DxeServicesTableLib             ## gDS (GCD memory space map — real flash vs. RAM copy)
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
