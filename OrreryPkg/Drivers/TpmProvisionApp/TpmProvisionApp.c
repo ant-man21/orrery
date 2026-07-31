@@ -107,9 +107,24 @@ ReadRomImage (
     return Status;
   }
 
+  /*
+   * Printed before any attempt to read from RomBase, and before the sanity
+   * checks below reject anything — so a wrong PCD resolution shows up here
+   * as a visibly wrong number instead of a crash reading garbage memory.
+   * This is a build-time PCD now (see docs/rom_discovery_story.md), not
+   * runtime discovery, but it's a new mechanism on its first real test —
+   * don't skip eyeballing this line against a known-good address/size.
+   */
+  Print (L"[PROVISION] PlatformRomInfoLib: base=0x%lx size=0x%lx (%lu KB)\n", RomBase, RomSize64, RomSize64 / 1024);
+
   if ((RomBase == 0) || (RomSize64 == 0)) {
-    Print (L"[PROVISION] PlatformRomInfoLib returned an empty ROM region (base=0x%lx size=0x%lx)\n", RomBase, RomSize64);
+    Print (L"[PROVISION] PlatformRomInfoLib returned an empty ROM region — refusing to read\n");
     return EFI_NOT_FOUND;
+  }
+
+  if (RomSize64 > SIZE_64MB) {
+    Print (L"[PROVISION] PlatformRomInfoLib returned an implausibly large size — refusing to read\n");
+    return EFI_UNSUPPORTED;
   }
 
   *RomSize   = (UINTN)RomSize64;
