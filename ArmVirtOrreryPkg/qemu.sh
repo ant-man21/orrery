@@ -30,6 +30,14 @@
 #   - fs0:'s uefi-shell.img must be an AArch64 UEFI Shell image — the X64
 #     one from Q35Pkg will not boot here. Provide your own at
 #     ArmVirtOrreryPkg/uefi-shell.img (gitignored, same as Q35Pkg's).
+#   - Explicit `-device virtio-gpu-pci` / `qemu-xhci` / `usb-kbd` / `usb-tablet`
+#     — q35 auto-attaches a default VGA + PS/2 input, 'virt' has no onboard
+#     display or input hardware. The firmware (VirtioGpuDxe, XhciDxe, etc.)
+#     is built in already; without these -device flags the GTK window stays
+#     blank even though the shell is alive and usable over -serial stdio.
+#   - Each pflash bank on 'virt' is hardcoded to 64 MiB regardless of the
+#     backing file's size, unlike q35 which sizes pflash to match the file.
+#     QEMU_EFI.fd/QEMU_VARS.fd are padded up to 64 MiB before use (see below).
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,6 +102,13 @@ if [[ ! -f "$CODE_FD" ]]; then
 fi
 
 # ---------- writable VARS copy ------------------------------------------------
+# The 'virt' machine's pflash banks are hardcoded to 64 MiB each, regardless
+# of the backing file's size — unlike Q35, which sizes pflash to match the
+# file. edk2's ArmVirtQemu build only allocates as much flash as the
+# firmware needs (~3 MB code, ~768 KB vars), so both CODE and VARS files
+# must be padded to 64 MiB or QEMU refuses to attach them.
+PFLASH_SIZE=$((64 * 1024 * 1024))
+
 VARS_DIR="$SCRIPT_DIR/vars"
 mkdir -p "$VARS_DIR"
 VARS_FD="$VARS_DIR/QEMU_VARS_${BUILD_TYPE}.fd"
@@ -101,6 +116,17 @@ if [[ ! -f "$VARS_FD" ]]; then
     echo "→ Seeding fresh VARS image from $VARS_SRC"
     cp "$VARS_SRC" "$VARS_FD"
 fi
+if [[ "$(stat -c%s "$VARS_FD")" -lt "$PFLASH_SIZE" ]]; then
+    echo "→ Padding VARS image to 64 MiB (pflash bank size)"
+    truncate -s "$PFLASH_SIZE" "$VARS_FD"
+fi
+
+# CODE is read-only firmware straight from the build — pad a scratch copy
+# each run so it always reflects the latest build (unlike VARS, it holds no
+# persistent state, so there's nothing to preserve across regenerations).
+CODE_FD_PADDED="$VARS_DIR/QEMU_CODE_${BUILD_TYPE}.fd"
+cp "$CODE_FD" "$CODE_FD_PADDED"
+truncate -s "$PFLASH_SIZE" "$CODE_FD_PADDED"
 
 # ---------- shared folder + disk image ----------------------------------------
 # Host directory:  ArmVirtOrreryPkg/shared/
@@ -170,7 +196,7 @@ echo "  Platform  : ArmVirt  ($QEMU_MACHINE)"
 echo "  Build     : $BUILD_TYPE"
 echo "  CPU       : $QEMU_CPU"
 echo "  RAM       : ${MEM_MB}M"
-echo "  CODE fd   : $CODE_FD"
+echo "  CODE fd   : $CODE_FD_PADDED"
 echo "  VARS fd   : $VARS_FD  (persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
 echo "  Host dir  : $SHARED_DIR"
@@ -182,11 +208,15 @@ echo ""
     -cpu "$QEMU_CPU" \
     -m "${MEM_MB}M" \
     \
-    -drive if=pflash,format=raw,readonly=on,file="$CODE_FD" \
+    -drive if=pflash,format=raw,readonly=on,file="$CODE_FD_PADDED" \
     -drive if=pflash,format=raw,file="$VARS_FD" \
     \
     -serial stdio \
     -display gtk \
+    -device virtio-gpu-pci \
+    -device qemu-xhci \
+    -device usb-kbd \
+    -device usb-tablet \
     -net none \
     -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio \
     -drive file="$SHARED_IMG",format=raw,if=virtio \

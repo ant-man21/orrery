@@ -134,14 +134,6 @@ if [[ "$RESET_SHARED" -eq 1 || ! -f "$SHARED_IMG" ]]; then
     rebuild_shared_img
 fi
 
-# ---------- uefi shell image (fs0:) --------------------------------------------
-# uefi-shell.img is gitignored — build it on first run (or if it's missing)
-# so it's always there without a manual step.
-UEFI_SHELL_IMG="$SCRIPT_DIR/uefi-shell.img"
-if [[ ! -f "$UEFI_SHELL_IMG" ]]; then
-    "$SCRIPT_DIR/../tools/make-uefi-shell-img.sh"
-fi
-
 # ---------- swtpm -------------------------------------------------------------
 SWTPM_DIR="$SCRIPT_DIR/chips/q35/tpm"
 mkdir -p "$SWTPM_DIR"
