@@ -129,6 +129,24 @@ ReadRomImage (
     }
 
     FvHeader = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)FvAddress;
+    Print (
+      L"[VERIFY] flash-backed FV: addr=0x%lx size=0x%lx guid=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x%a\n",
+      FvAddress,
+      FvHeader->FvLength,
+      FvHeader->FileSystemGuid.Data1,
+      FvHeader->FileSystemGuid.Data2,
+      FvHeader->FileSystemGuid.Data3,
+      FvHeader->FileSystemGuid.Data4[0],
+      FvHeader->FileSystemGuid.Data4[1],
+      FvHeader->FileSystemGuid.Data4[2],
+      FvHeader->FileSystemGuid.Data4[3],
+      FvHeader->FileSystemGuid.Data4[4],
+      FvHeader->FileSystemGuid.Data4[5],
+      FvHeader->FileSystemGuid.Data4[6],
+      FvHeader->FileSystemGuid.Data4[7],
+      CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid) ? " (NVRAM, excluded)" : ""
+      );
+
     if (CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid)) {
       continue;                 /* NV variable store — not "the ROM" */
     }
