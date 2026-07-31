@@ -1,0 +1,28 @@
+## PlatformRomInfoLibQ35.inf
+##
+## PlatformRomInfoLib instance for Q35 (OVMF/x86) — reads OVMF's own
+## PcdBfvBase/PcdBfvRawDataSize "Boot Firmware Volume" PCDs. See
+## PlatformRomInfoLibQ35.c for why.
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = PlatformRomInfoLibQ35
+  FILE_GUID       = 6a1b9e2f-3c4d-4e5f-8a9b-0c1d2e3f4a5b
+  MODULE_TYPE     = BASE
+  VERSION_STRING  = 1.0
+  LIBRARY_CLASS   = PlatformRomInfoLib
+
+[Sources]
+  PlatformRomInfoLibQ35.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  OvmfPkg/OvmfPkg.dec
+  OrreryPkg/OrreryPkg.dec
+
+[LibraryClasses]
+  PcdLib
+
+[Pcd]
+  gUefiOvmfPkgTokenSpaceGuid.PcdBfvBase          ## CONSUMES
+  gUefiOvmfPkgTokenSpaceGuid.PcdBfvRawDataSize   ## CONSUMES

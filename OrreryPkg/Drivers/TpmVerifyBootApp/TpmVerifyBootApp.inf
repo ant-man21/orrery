@@ -41,7 +41,6 @@
   UefiLib                         ## Print, etc.
   UefiBootServicesTableLib        ## gBS
   UefiRuntimeServicesTableLib     ## gRT (for later phases)
-  DxeServicesTableLib             ## gDS (GCD memory space map — real flash vs. RAM copy)
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
@@ -50,15 +49,11 @@
   Tpm2PcrLib                      ## BuildPcrSelection/OpenPcrPolicySession/ExtendPcr (OrreryPkg-local, shared with TpmProvisionApp)
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
+  PlatformRomInfoLib              ## where's my own flash ROM (OrreryPkg-local, platform-specific instance — see docs/rom_discovery_story.md)
   DebugLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
-  gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (locate flash-resident FVs — issue #7)
-  gEfiFirmwareVolumeBlock2ProtocolGuid   ## CONSUMES  (get each FV's physical base address)
-
-[Guids]
-  gEfiSystemNvDataFvGuid                 ## CONSUMES  (identify + exclude the NV variable store FV)
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

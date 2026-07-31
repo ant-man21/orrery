@@ -22,24 +22,18 @@
  */
 
 #include <Uefi.h>
-#include <Pi/PiDxeCis.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
-#include <Library/DxeServicesTableLib.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseCryptLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PlatformRomInfoLib.h>
 
-#include <Pi/PiFirmwareFile.h>
-#include <Pi/PiFirmwareVolume.h>
 #include <Protocol/Tcg2Protocol.h>
-#include <Protocol/FirmwareVolume2.h>
-#include <Protocol/FirmwareVolumeBlock.h>
-#include <Guid/SystemNvDataGuid.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
@@ -56,34 +50,20 @@
 EFI_TCG2_PROTOCOL  *Tcg2;
 
 /* ── helper: read current ROM from flash ───────────────────────────────── *
- * Locates flash-resident firmware volumes via EFI_FIRMWARE_VOLUME2_PROTOCOL
- * instead of hardcoding OVMF's fixed 0xFFC00000 base — real hardware won't
- * have a static, known-in-advance flash address (issue #7).
+ * Two rounds of runtime discovery (EFI_FIRMWARE_VOLUME2_PROTOCOL/FVB2
+ * enumeration, then GCD memory type) both turned out to be unreliable on
+ * both platforms — neither ever proved able to actually distinguish real
+ * flash content from a RAM-resident decompressed FV. Full trail in
+ * docs/rom_discovery_story.md.
  *
- * "Has EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL with a working GetPhysicalAddress"
- * is NOT a reliable "this is real flash" test — verified wrong on both
- * platforms (see docs/rom_discovery_story.md for the full trail). DXE Core's
- * generic FwVolBlock driver installs that exact same protocol combination
- * for any FV that was handed off via a HOB too, including a GUIDed section
- * decompressed straight into a pool allocation (e.g. ArmVirtQemu's FvMain,
- * or Q35's DXEFV) — there is nothing about FVB2 presence that implies actual
- * block-device/flash backing.
- *
- * What's actually authoritative: QemuFlashFvbServicesRuntimeDxe (Q35) and
- * VirtNorFlashDxe (ArmVirt) both register their real flash windows with
- * gDS->AddMemorySpace(EfiGcdMemoryTypeMemoryMappedIo, ...) — that's the GCD
- * (DXE Services / Global Coherency Domain) memory space map, a lower-level,
- * more complete map than gBS->GetMemoryMap() (which only covers "system
- * memory" and won't list pure MMIO at all — confirmed via the shell's
- * `memmap` command finding no entry for Q35's flash). A pool-allocated
- * decompressed FV, by contrast, always lives in EfiGcdMemoryTypeSystemMemory.
- * So: keep only FVs whose physical address's GCD type is
- * EfiGcdMemoryTypeMemoryMappedIo.
- *
- * The NV variable store is additionally excluded by FileSystemGuid
- * (gEfiSystemNvDataFvGuid) as a belt-and-suspenders check — its contents
- * change every boot and have no business being measured into PCR[16] as
- * "the ROM," independent of whether it happens to be GCD-typed as MMIO.
+ * What every platform already has, correctly, at build time: a PCD its own
+ * FDF uses to lay out the FD in the first place. PlatformRomInfoLib reads
+ * that PCD — a different one per platform (OVMF's PcdBfvBase/
+ * PcdBfvRawDataSize on Q35, ArmPkg's PcdFvBaseAddress/PcdFvSize on
+ * ArmVirt), selected via the platform DSC's [LibraryClasses] section, not
+ * a hardcoded address in this shared source (issue #7). Porting to new
+ * hardware means writing a new PlatformRomInfoLib instance, not touching
+ * this app.
  */
 STATIC EFI_STATUS
 ReadRomImage (
@@ -92,130 +72,27 @@ ReadRomImage (
   )
 {
   EFI_STATUS             Status;
-  EFI_HANDLE              *Handles;
-  UINTN                   NumHandles;
-  UINTN                   Index;
-  UINTN                   FvCount;
-  UINT64                  TotalFvBytes;
-  EFI_PHYSICAL_ADDRESS    LowestAddress;
-  EFI_PHYSICAL_ADDRESS    HighestEnd;
+  EFI_PHYSICAL_ADDRESS   RomBase;
+  UINT64                 RomSize64;
 
-  Status = gBS->LocateHandleBuffer (
-                  ByProtocol,
-                  &gEfiFirmwareVolume2ProtocolGuid,
-                  NULL,
-                  &NumHandles,
-                  &Handles
-                  );
-  if (EFI_ERROR (Status) || (NumHandles == 0)) {
-    Print (L"[VERIFY] No firmware volumes found: %r\n", Status);
-    return EFI_ERROR (Status) ? Status : EFI_NOT_FOUND;
+  Status = GetPlatformRomInfo (&RomBase, &RomSize64);
+  if (EFI_ERROR (Status)) {
+    Print (L"[VERIFY] GetPlatformRomInfo failed: %r\n", Status);
+    return Status;
   }
 
-  FvCount       = 0;
-  TotalFvBytes  = 0;
-  LowestAddress = MAX_UINT64;
-  HighestEnd    = 0;
-
-  Print (L"[VERIFY] %u total EFI_FIRMWARE_VOLUME2_PROTOCOL handle(s)\n", (UINT32)NumHandles);
-
-  for (Index = 0; Index < NumHandles; Index++) {
-    EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL  *Fvb;
-    EFI_PHYSICAL_ADDRESS                 FvAddress;
-    EFI_FIRMWARE_VOLUME_HEADER           *FvHeader;
-    EFI_GCD_MEMORY_SPACE_DESCRIPTOR      GcdDescriptor;
-    BOOLEAN                              IsMmio;
-    BOOLEAN                              IsNvram;
-
-    Status = gBS->HandleProtocol (
-                    Handles[Index],
-                    &gEfiFirmwareVolumeBlock2ProtocolGuid,
-                    (VOID **)&Fvb
-                    );
-    if (EFI_ERROR (Status)) {
-      Print (L"[VERIFY]   handle %u: no FVB2 protocol — skipped\n", (UINT32)Index);
-      continue;
-    }
-
-    Status = Fvb->GetPhysicalAddress (Fvb, &FvAddress);
-    if (EFI_ERROR (Status)) {
-      Print (L"[VERIFY]   handle %u: FVB2 GetPhysicalAddress failed: %r — skipped\n", (UINT32)Index, Status);
-      continue;
-    }
-
-    FvHeader = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)FvAddress;
-
-    Status = gDS->GetMemorySpaceDescriptor (FvAddress, &GcdDescriptor);
-    IsMmio  = !EFI_ERROR (Status) && (GcdDescriptor.GcdMemoryType == EfiGcdMemoryTypeMemoryMappedIo);
-    IsNvram = CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid);
-
-    Print (
-      L"[VERIFY]   handle %u: addr=0x%lx size=0x%lx guid=%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x gcdType=%d%a%a\n",
-      (UINT32)Index,
-      FvAddress,
-      FvHeader->FvLength,
-      FvHeader->FileSystemGuid.Data1,
-      FvHeader->FileSystemGuid.Data2,
-      FvHeader->FileSystemGuid.Data3,
-      FvHeader->FileSystemGuid.Data4[0],
-      FvHeader->FileSystemGuid.Data4[1],
-      FvHeader->FileSystemGuid.Data4[2],
-      FvHeader->FileSystemGuid.Data4[3],
-      FvHeader->FileSystemGuid.Data4[4],
-      FvHeader->FileSystemGuid.Data4[5],
-      FvHeader->FileSystemGuid.Data4[6],
-      FvHeader->FileSystemGuid.Data4[7],
-      EFI_ERROR (Status) ? -1 : (INT32)GcdDescriptor.GcdMemoryType,
-      IsMmio ? " (MMIO)" : " (not MMIO, skipped)",
-      IsNvram ? " (NVRAM, skipped)" : ""
-      );
-
-    if (!IsMmio || IsNvram) {
-      continue;                 /* RAM copy or NV variable store — not "the ROM" */
-    }
-
-    FvCount++;
-    TotalFvBytes += FvHeader->FvLength;
-    if (FvAddress < LowestAddress) {
-      LowestAddress = FvAddress;
-    }
-
-    if (FvAddress + FvHeader->FvLength > HighestEnd) {
-      HighestEnd = FvAddress + FvHeader->FvLength;
-    }
-  }
-
-  FreePool (Handles);
-
-  if (FvCount == 0) {
-    Print (L"[VERIFY] No flash-backed firmware volumes found\n");
+  if ((RomBase == 0) || (RomSize64 == 0)) {
+    Print (L"[VERIFY] PlatformRomInfoLib returned an empty ROM region (base=0x%lx size=0x%lx)\n", RomBase, RomSize64);
     return EFI_NOT_FOUND;
   }
 
-  /*
-   * Q35Pkg's FDF packs the flash-resident FVs (FVMAIN_COMPACT + SECFV)
-   * back-to-back with no gap, so the merged [lowest, highest) span should
-   * exactly equal the sum of the individual FV sizes. If it doesn't,
-   * something about the flash layout isn't what this code assumes —
-   * refuse to guess, rather than silently reading whatever sits in a gap.
-   */
-  if (TotalFvBytes != (HighestEnd - LowestAddress)) {
-    Print (L"[VERIFY] Firmware volumes are not contiguous — refusing to read a merged ROM range\n");
-    return EFI_UNSUPPORTED;
-  }
-
-  *RomSize   = (UINTN)(HighestEnd - LowestAddress);
-  *RomBuffer = AllocateCopyPool (*RomSize, (VOID *)(UINTN)LowestAddress);
+  *RomSize   = (UINTN)RomSize64;
+  *RomBuffer = AllocateCopyPool (*RomSize, (VOID *)(UINTN)RomBase);
   if (*RomBuffer == NULL) {
     return EFI_OUT_OF_RESOURCES;
   }
 
-  Print (
-    L"[VERIFY] ROM snapshot: 0x%lx, %u bytes (%u firmware volume(s))\n",
-    LowestAddress,
-    (UINT32)*RomSize,
-    (UINT32)FvCount
-    );
+  Print (L"[VERIFY] ROM snapshot: 0x%lx, %u bytes\n", RomBase, (UINT32)*RomSize);
   return EFI_SUCCESS;
 }
 

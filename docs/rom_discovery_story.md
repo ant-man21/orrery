@@ -132,6 +132,99 @@ contiguous" with no way to see why.
 
 Status: builds clean on both platforms (verified in the dev sandbox — no
 qemu-system-x86_64 available there to boot-test Q35, only compile-verified;
-ArmVirt boot-tested by the repo owner). Awaiting a real-hardware/QEMU run on
-both platforms to confirm the GCD check actually resolves it end to end
-before calling this closed.
+ArmVirt boot-tested by the repo owner). **Wrong again** — see next.
+
+## 8. GCD check ships, real flash turns out to be GCD type NonExistent
+
+Real re-run, both platforms, after a full clean rebuild + wiped shared.img:
+
+    ArmVirt:
+      handle 0: addr=0x1000      size=0x2FF000  gcdType=0 (not MMIO, skipped)  <- FVMAIN_COMPACT, real flash
+      handle 1: addr=0x473B5010  size=0x578380  gcdType=2 (not MMIO, skipped)  <- FvMain, RAM
+
+    Q35:
+      handle 0: addr=0x900000    size=0xE80000  gcdType=2 (not MMIO, skipped)  <- DXEFV, RAM
+
+`gcdType=2` is `EfiGcdMemoryTypeSystemMemory` — correct for the RAM copies,
+confirms that half of the check works. But ArmVirt's *real* flash
+(`FVMAIN_COMPACT` at `0x1000`) comes back `gcdType=0`,
+`EfiGcdMemoryTypeNonExistent` — never registered in GCD by anyone, not
+`EfiGcdMemoryTypeMemoryMappedIo` as expected. And Q35 still only enumerates
+one FV2 handle total, same as before — the real flash-resident
+`FVMAIN_COMPACT`/`SECFV` still never show up as candidates at all.
+
+Root cause, found by actually reading `VirtNorFlashDxe.c`'s init path
+(`NorFlashInitialise` → `NorFlashCreateInstance` → `NorFlashFvbInitialize`):
+the `gDS->AddMemorySpace(EfiGcdMemoryTypeMemoryMappedIo, ...)` call — and the
+`gEfiFirmwareVolumeBlockProtocolGuid` install alongside it — only happens
+`if (SupportFvb)`, and `SupportFvb` is passed in as `ContainVariableStorage`:
+literally, VirtNorFlashDxe only turns *the NOR flash instance holding the
+variable store* into an FVB2-producing, GCD-MMIO-registered device. The CODE
+bank (holding the actual ROM, `FVMAIN_COMPACT`) is never touched by this
+driver at all.
+
+So where does `FVMAIN_COMPACT`'s FV2/FVB2 handle (`addr=0x1000`) come from,
+if not `VirtNorFlashDxe`? The same generic DXE Core `FwVolBlock` HOB-wrapping
+mechanism as the RAM-decompressed copies (step 7's own comment already
+described this, just hadn't connected that it applies to `FVMAIN_COMPACT`
+too) — PEI hands DXE Core an `EFI_HOB_TYPE_FV` HOB pointing at
+`FVMAIN_COMPACT` so DXE Core can find `FvMain` inside it, and the same
+generic wrapper that never calls `AddMemorySpace` handles that HOB exactly
+like it handles the RAM one. **Real flash-resident content, on this
+platform, never goes through a code path that registers it in the GCD at
+all.** The GCD memory type is not a usable signal here, full stop — not "use
+a different type than MMIO," genuinely not present in GCD either way.
+
+This means the entire family of "ask the firmware to tell you where its own
+flash is via some protocol/memory-map introspection" is a dead end on both
+platforms as currently built. Standard EDK2 practice for "what's my own
+flash base/size" is not runtime introspection at all — it's a **build-time
+PCD**, set by the platform's own DSC/FDF (which is exactly what both
+`ArmVirtQemu.fdf`'s `PcdFdBaseAddress`/`PcdFdSize` and OVMF's
+`PcdOvmfFdBaseAddress`/`PcdBfvBase`-family PCDs already are — the very
+values these platforms' own FDFs use to lay out the FD in the first place).
+Reaching for FV2/FVB2 protocol introspection (#12's approach) instead of a
+PCD was the wrong tool from the start; it happened to look reasonable
+because it avoided one hardcoded C literal, but a per-platform PCD isn't
+"hardcoding" in the sense issue #7 was worried about (a single constant
+wrong for every platform) — it's the standard mechanism for a platform to
+tell its own shared code a platform-specific constant, and every real EDK2
+platform port does exactly this.
+
+## 9. PlatformRomInfoLib — a library class, not a hardcoded PCD read
+
+Landed as a `PlatformRomInfoLib` library class (`GetPlatformRomInfo(OUT
+EFI_PHYSICAL_ADDRESS *RomBase, OUT UINT64 *RomSize)`), declared once in
+`OrreryPkg.dec`, with one instance per platform:
+
+- `PlatformRomInfoLibQ35` — reads `gUefiOvmfPkgTokenSpaceGuid.PcdBfvBase` /
+  `PcdBfvRawDataSize`, OVMF's own "Boot Firmware Volume" PCDs (the same pair
+  OVMF's TDX/SEV measurement code, `PeilessStartupLib`, reads for the exact
+  same reason — finding its own flash-resident firmware).
+- `PlatformRomInfoLibArmVirt` — reads `gArmTokenSpaceGuid.PcdFvBaseAddress` /
+  `PcdFvSize`, the standard ArmPkg pair `ArmVirtQemu.fdf` itself uses to
+  patch `FVMAIN_COMPACT`'s FD region, and that `ArmPlatformPkg/Sec/Sec.c`
+  reads for the same reason.
+
+Both PCD pairs are populated by `GenFds` directly from each platform's own
+FDF at image-build time — no new DSC-level PCD declarations were needed,
+they already existed and already had exactly this meaning; the earlier
+"has FVB2"/"is GCD MMIO" runtime checks were solving an already-solved
+problem the wrong way.
+
+Each platform's DSC selects its own instance via
+`[LibraryClasses.common.UEFI_APPLICATION]` — `Q35Pkg.dsc` maps
+`PlatformRomInfoLib` to `PlatformRomInfoLibQ35`, `ArmVirtOrreryPkg.dsc` to
+`PlatformRomInfoLibArmVirt`. `TpmProvisionApp.c`/`TpmVerifyBootApp.c` call
+`GetPlatformRomInfo()` and never reference a platform-specific PCD, GUID, or
+protocol directly — `ReadRomImage()` dropped from ~90 lines of
+protocol-enumeration-plus-heuristics to a single library call plus an
+`AllocateCopyPool`. Porting to real hardware (Tegra, per the project's
+stated direction) means writing one more `PlatformRomInfoLib` instance and
+pointing that platform's DSC at it — the app itself doesn't change.
+
+Status: both platforms build clean (compile-verified only in the dev
+sandbox — no `qemu-system-x86_64` there to boot-test Q35). Awaiting a real
+QEMU run on both platforms — this is the third attempt at this bug, so
+"builds clean" is being stated plainly, not as a substitute for the actual
+verification still owed.
