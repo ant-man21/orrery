@@ -108,6 +108,16 @@ build \
 echo ""
 echo "✓ Build complete → $WORKSPACE/$OUTPUT_DIR/${BUILD_TYPE}_${TOOLCHAIN}/FV/"
 
+# ---------- uefi shell image (fs0:) --------------------------------------------
+# uefi-shell.img is gitignored — build it on first run (or if it's missing)
+# so it's always there without a manual step.
+UEFI_SHELL_IMG="$SCRIPT_DIR/uefi-shell.img"
+if [[ ! -f "$UEFI_SHELL_IMG" ]]; then
+    "$SCRIPT_DIR/../tools/make-uefi-shell-img.sh"
+else 
+    echo "✓ $SCRIPT_DIR/uefi-shell.img already generated"
+fi
+
 # ---------- post-build sync ---------------------------------------------------
 # Copy application .efi files (not firmware blobs) to shared/apps/ so the
 # next ./run.sh --reset-shared picks them up automatically on fs1:\apps\.
