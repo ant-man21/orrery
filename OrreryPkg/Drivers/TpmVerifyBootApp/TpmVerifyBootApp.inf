@@ -56,6 +56,9 @@
   gEfiFirmwareVolume2ProtocolGuid        ## CONSUMES  (locate flash-resident FVs — issue #7)
   gEfiFirmwareVolumeBlock2ProtocolGuid   ## CONSUMES  (get each FV's physical base address)
 
+[Guids]
+  gEfiSystemNvDataFvGuid                 ## CONSUMES  (identify + exclude the NV variable store FV)
+
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up
   ## some GCC builds when mixing C99-isms with UEFI coding style.

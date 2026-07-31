@@ -59,6 +59,7 @@
 
 [Guids]
   gEfiTpmDeviceInstanceTpm20DtpmGuid     ## for TPM device selection
+  gEfiSystemNvDataFvGuid                 ## CONSUMES  (identify + exclude the NV variable store FV)
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

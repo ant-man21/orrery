@@ -44,6 +44,7 @@
 #include <Protocol/Tcg2Protocol.h>
 #include <Protocol/FirmwareVolume2.h>
 #include <Protocol/FirmwareVolumeBlock.h>
+#include <Guid/SystemNvDataGuid.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
@@ -90,10 +91,17 @@ PrintTcg2Caps (EFI_TCG2_PROTOCOL *Tcg2)
  * protocols are real flash content, which is what we want to measure — a
  * decompressed RAM copy isn't "the ROM."
  *
- * This also naturally excludes the NV variable store: it's raw NVRAM (no
- * FV header, no file system), so it never shows up as an FV2 handle at
- * all, unlike the old hardcoded 4MB read, which pulled in the mutable
- * variable store alongside the actual firmware code.
+ * The NV variable store must also be excluded explicitly, by FileSystemGuid
+ * (gEfiSystemNvDataFvGuid): on Q35 it happens to never show up as an FV2
+ * handle at all, but on ArmVirtQemu the vars pflash chip *is* formatted as
+ * a valid FV (see ArmVirtPkg/VarStore.fdf.inc) and VirtNorFlashDxe exposes
+ * FVB2 on it, so it gets wrapped into EFI_FIRMWARE_VOLUME2_PROTOCOL like
+ * any other flash-resident FV. Left in, it would pull in a second FV that
+ * sits in a completely separate pflash bank from the code FV (CODE and
+ * VARS are two distinct -pflash devices, not one contiguous range), which
+ * is exactly what trips the contiguity check below — and even if it
+ * didn't, NVRAM contents change every boot and have no business being
+ * measured into PCR[16] as "the ROM" anyway.
  */
 STATIC EFI_STATUS
 ReadRomImage (
@@ -147,6 +155,10 @@ ReadRomImage (
     }
 
     FvHeader = (EFI_FIRMWARE_VOLUME_HEADER *)(UINTN)FvAddress;
+    if (CompareGuid (&FvHeader->FileSystemGuid, &gEfiSystemNvDataFvGuid)) {
+      continue;                 /* NV variable store — not "the ROM" */
+    }
+
     FvCount++;
     TotalFvBytes += FvHeader->FvLength;
     if (FvAddress < LowestAddress) {
