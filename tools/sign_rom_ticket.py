@@ -136,13 +136,34 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("rom", type=pathlib.Path, help="Path to the ROM image to sign")
     parser.add_argument(
-        "-o", "--out", type=pathlib.Path,
-        default=REPO_ROOT / "Q35Pkg" / "shared" / "data" / "rom.ticket",
-        help="Output ticket path (default: Q35Pkg/shared/data/rom.ticket)",
+        "-o", "--out", type=pathlib.Path, required=True,
+        help="Output ticket path — e.g. <chip>/shared/data/rom.ticket. No "
+             "default: every platform's build.sh must pass its own path "
+             "explicitly, this script has no notion of which chip it's "
+             "signing for.",
+    )
+    parser.add_argument(
+        "--offset", type=lambda x: int(x, 0), default=0,
+        help="Byte offset into ROM to start hashing from (default: 0, whole file). "
+             "Must match exactly what PlatformRomInfoLib measures on-device — e.g. "
+             "ArmVirtQemu's QEMU_EFI.fd has a 0x1000-byte SEC/reset-vector region "
+             "before FVMAIN_COMPACT that isn't part of the measured region.",
+    )
+    parser.add_argument(
+        "--length", type=lambda x: int(x, 0), default=None,
+        help="Number of bytes to hash from --offset (default: rest of file).",
     )
     args = parser.parse_args()
 
-    rom_bytes = args.rom.read_bytes()
+    full_bytes = args.rom.read_bytes()
+    end = None if args.length is None else args.offset + args.length
+    rom_bytes = full_bytes[args.offset : end]
+    if args.offset != 0 or args.length is not None:
+        print(
+            f"Slicing ROM: offset=0x{args.offset:x}, length={len(rom_bytes)} "
+            f"(of {len(full_bytes)} total bytes in {args.rom})"
+        )
+
     inner, pcr16, pcrdig, approved, a_hash = compute_a_hash(rom_bytes)
     signature = sign(a_hash)
     self_check(a_hash, signature)
@@ -162,10 +183,10 @@ def main() -> None:
     print(f"signature       : {len(signature)} bytes, self-check OK")
     print(f"ticket written  : {args.out}")
     print()
-    print("Q35Pkg/build.sh runs this automatically after each build and pushes")
-    print("the ticket onto shared.img (fs1:\\data\\rom.ticket) alongside the")
-    print("synced apps — no manual step needed unless you're signing a ROM")
-    print("outside the normal build flow.")
+    print("Q35Pkg/build.sh and ArmVirtOrreryPkg/build.sh both run this")
+    print("automatically after each build and push the ticket onto shared.img")
+    print("(fs1:\\data\\rom.ticket) alongside the synced apps — no manual step")
+    print("needed unless you're signing a ROM outside the normal build flow.")
 
 
 if __name__ == "__main__":
