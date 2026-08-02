@@ -150,7 +150,7 @@ if [[ "$SYNC" -eq 1 ]]; then
     mkdir -p "$DATA_DIR"
 
     SIGNING_KEY="$SCRIPT_DIR/../tools/keys/update_signing_key.pem"
-    ROM_FD="$BUILD_OUT/../FV/OVMF_CODE.fd"
+    ROM_FD="$BUILD_OUT/../FV/QEMU_EFI.fd"
     if [[ ! -f "$SIGNING_KEY" ]]; then
         echo ""
         echo "  (no signing key yet — run tools/generate_signing_key.py once, then rebuild"
