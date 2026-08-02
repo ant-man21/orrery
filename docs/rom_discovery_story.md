@@ -256,3 +256,29 @@ showed up under real testing rather than reasoning from source. Worth
 remembering next time "the discovery mechanism" is tempting to reach for
 runtime protocol introspection instead of the build-time PCD every
 platform already has correct.
+
+## 11. On trusting the AI here
+
+Worth being explicit about, not just implicit in the numbering above: an AI
+(Claude) drove sections 2 through 9 of this story, including proposing both
+of the wrong approaches — FV2/FVB2 protocol enumeration, then GCD memory
+type — each time with a plausible-sounding rationale and confident framing,
+and each time wrong in a way that only surfaced once it was actually run on
+real hardware/QEMU rather than reasoned about from source. Reading EDK2
+source carefully and reasoning from it is not the same as knowing what a
+platform actually does at runtime; both wrong approaches were internally
+consistent and cited real EDK2 mechanisms correctly, they just didn't
+describe what these two platforms actually do.
+
+The pattern in hindsight: every runtime-discovery attempt was solving a
+problem that didn't need runtime discovery at all. The correct answer
+(`PlatformRomInfoLib`, section 9) was a **build-time** PCD every platform's
+own FDF already had, sitting there the whole time — not something that
+needed to be *discovered* at boot. The AI reached for boot-time cleverness
+(enumerate protocols, inspect the GCD) before checking whether build-time
+already had the answer, twice in a row, and only landed on the right
+mechanism after two real-hardware failures forced a step back to "what does
+this platform already know about itself at build time, and where does it
+already say so." Worth treating AI-proposed runtime/dynamic solutions with
+real suspicion when the platform's own build system plausibly already has
+the value as a static, declared constant — check for that first, not last.
