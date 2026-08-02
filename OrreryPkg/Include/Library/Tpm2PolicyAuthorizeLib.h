@@ -34,8 +34,12 @@
 
 /**
   TPM2_LoadExternal — load a public-only external object (no Sensitive
-  area, hierarchy = TPM_RH_NULL) just long enough to reference its Name.
-  Only supports the RSA public-key shape TrustedUpdateKey.h produces.
+  area, hierarchy = TPM_RH_OWNER — not TPM_RH_NULL; a NULL-hierarchy
+  object only ever gets a placeholder verification ticket back from
+  Tpm2VerifySignature, confirmed against real hardware, which a real
+  Tpm2PolicyAuthorize call then rejects with TPM_RC_VALUE) just long
+  enough to reference its Name. Only supports the RSA public-key shape
+  TrustedUpdateKey.h produces.
 
   @param[in]  InPublic       The public area to load (type must be
                                TPM_ALG_RSA).

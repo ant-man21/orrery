@@ -151,9 +151,25 @@ Tpm2LoadExternal (
   Buffer           = MarshalRsaPublicArea (InPublic, Buffer);
   WriteUnaligned16 ((UINT16 *)PublicSizeField, SwapBytes16 ((UINT16)(Buffer - PublicStart)));
 
-  // hierarchy — TPM_RH_NULL: this key is only ever loaded transiently to
-  // read its Name / check one signature, never persisted.
-  WriteUnaligned32 ((UINT32 *)Buffer, SwapBytes32 (TPM_RH_NULL));
+  // hierarchy — TPM_RH_OWNER, not TPM_RH_NULL. This key is never
+  // persisted either way (loaded transiently, flushed after use), but
+  // the hierarchy also controls what kind of ticket Tpm2VerifySignature
+  // can later produce for objects loaded here: real hardware confirmed
+  // that TPM_RH_NULL gets you a placeholder ticket back (hierarchy =
+  // TPM_RH_NULL, digest.size = 0) instead of a real one, because NULL
+  // is the "anyone can load anything, no persistent identity" hierarchy
+  // — a genuine verification ticket from it would be meaningless as
+  // proof. That placeholder is exactly right for a *trial* session's
+  // throwaway ticket (which skips validation entirely), but a *real*
+  // Tpm2PolicyAuthorize call rejects it outright — TPM_RC_VALUE on the
+  // checkTicket parameter, confirmed against real swtpm hardware.
+  // TPM_RH_OWNER matches the standard convention for this exact
+  // workflow (e.g. `tpm2_loadexternal`'s own default is `-C o`, Owner
+  // hierarchy) and needs no owner authorization here — LoadExternal
+  // takes no auth session regardless of which hierarchy is named. Name
+  // computation is unaffected either way: an object's Name is purely a
+  // function of its public area content, never the loading hierarchy.
+  WriteUnaligned32 ((UINT32 *)Buffer, SwapBytes32 (TPM_RH_OWNER));
   Buffer += sizeof (UINT32);
 
   SendBufferSize              = (UINT32)((UINTN)Buffer - (UINTN)&SendBuffer);
