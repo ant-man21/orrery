@@ -1,0 +1,37 @@
+# Quick setup — fresh clone to booting QEMU
+# Copy/paste block for an AI agent (or a human in a hurry). Ubuntu/Debian host.
+# For narrative detail/gotchas see host_environment.txt and setup.txt.
+
+# 1. Pull in edk2 + every nested submodule it needs (openssl, mbedtls,
+#    oniguruma, brotli x2, libfdt, mipisyst, libspdm, ...). --recursive
+#    covers all of them in one shot — don't init them one at a time.
+git submodule update --init --recursive
+
+# 2. Build-time packages. All four are load-bearing: BaseTools' C tools need
+#    build-essential, NASM assembles X64 lib code, iasl compiles ACPI (.aml)
+#    tables, gcc-aarch64-linux-gnu is only needed for ArmVirtOrreryPkg.
+sudo apt install -y build-essential uuid-dev iasl nasm python3 gcc-aarch64-linux-gnu
+
+# 3. Build BaseTools' C tools (GenFfs, GenSec, GenFv, ...) — required once
+#    per edk2 checkout; the Python build system silently no-ops without them
+#    (fails later, deep in FV generation, with "Unable to find the real 'GenSec'").
+make -C edk2/BaseTools
+
+# 4. Build both platforms (each script cd's into its own dir; run from repo root).
+( cd Q35Pkg && ./build.sh -r )              # -> Build/OvmfX64/RELEASE_GCC/FV/
+( cd ArmVirtOrreryPkg && ./build.sh -r )    # -> Build/ArmVirtQemu-AArch64/RELEASE_GCC/FV/
+
+# 5. Boot either one (each qemu.sh handles swtpm + shared.img on its own).
+( cd Q35Pkg && ./qemu.sh -r )
+( cd ArmVirtOrreryPkg && ./qemu.sh -r )
+
+# --- Troubleshooting quick hits -----------------------------------------
+# "MipiSysTLib/mipisyst/library/include is not found in packages path"
+#   -> step 1 was skipped or ran non-recursively.
+# "nasm: not found" / "iasl: not found"
+#   -> step 2 was skipped.
+# "Unable to find the real 'GenSec'/'GenFfs' to run"
+#   -> step 3 was skipped.
+# QEMU asserts/hangs on "broken CPU hotplug register block"
+#   -> host QEMU is < 8.0 (common on Ubuntu 22.04's packaged 6.2); see the
+#      QEMU-from-source section in host_environment.txt.

@@ -26,13 +26,13 @@
   Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
   Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
   Tpm2PcrLib|OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
+  PlatformRomInfoLib|OrreryPkg/Library/PlatformRomInfoLibArmVirt/PlatformRomInfoLibArmVirt.inf
 
 ## -----------------------------------------------------------------------------
-## Shared drivers (OrreryPkg) — build-verification only. TpmProvisionApp/
-## TpmVerifyBootApp hardcode an X64/OVMF flash address (see their own source
-## comments); they compile clean here but are not wired up to run/boot on
-## this platform yet. Any arm-virt-only drivers would go in
-## ArmVirtOrreryPkg/Drivers instead.
+## Shared drivers (OrreryPkg). TpmProvisionApp/TpmVerifyBootApp get their
+## flash-ROM location from PlatformRomInfoLib (see above), not a hardcoded
+## address or runtime discovery — see docs/rom_discovery_story.md for why.
+## Any arm-virt-only drivers would go in ArmVirtOrreryPkg/Drivers instead.
 ## -----------------------------------------------------------------------------
 [Components]
   OrreryPkg/Drivers/HelloDxe/HelloDxe.inf

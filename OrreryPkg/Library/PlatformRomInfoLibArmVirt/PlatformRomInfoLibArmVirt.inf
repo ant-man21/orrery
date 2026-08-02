@@ -1,0 +1,29 @@
+## PlatformRomInfoLibArmVirt.inf
+##
+## PlatformRomInfoLib instance for ArmVirtQemu (QEMU 'virt', AArch64) —
+## reads the standard ArmPkg PcdFvBaseAddress/PcdFvSize pair, patched by
+## GenFds from the FDF's FVMAIN_COMPACT region line. See
+## PlatformRomInfoLibArmVirt.c for why.
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = PlatformRomInfoLibArmVirt
+  FILE_GUID       = 7b2c0f3a-4d5e-4f6a-9b0c-1d2e3f4a5b6c
+  MODULE_TYPE     = BASE
+  VERSION_STRING  = 1.0
+  LIBRARY_CLASS   = PlatformRomInfoLib
+
+[Sources]
+  PlatformRomInfoLibArmVirt.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  OrreryPkg/OrreryPkg.dec
+
+[LibraryClasses]
+  PcdLib
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFvBaseAddress   ## CONSUMES
+  gArmTokenSpaceGuid.PcdFvSize          ## CONSUMES

@@ -28,3 +28,10 @@
   ## and TpmVerifyBootApp (previously duplicated byte-for-byte — see
   ## issue #8).
   Tpm2PcrLib|Include/Library/Tpm2PcrLib.h
+
+  ## "Where is my own boot firmware volume" — one platform-agnostic
+  ## interface, one library instance per platform (PlatformRomInfoLibQ35,
+  ## PlatformRomInfoLibArmVirt, ...), selected in each platform DSC.
+  ## Runtime discovery (FV2/FVB2 enumeration, GCD memory type) proved
+  ## unreliable on both existing platforms — see docs/rom_discovery_story.md.
+  PlatformRomInfoLib|Include/Library/PlatformRomInfoLib.h
