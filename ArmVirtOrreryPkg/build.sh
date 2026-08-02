@@ -145,6 +145,24 @@ if [[ "$SYNC" -eq 1 ]]; then
         done
     fi
 
+    # ---------- sign this build's ROM -> shared/data/rom.ticket --------------
+    DATA_DIR="$SCRIPT_DIR/shared/data"
+    mkdir -p "$DATA_DIR"
+
+    SIGNING_KEY="$SCRIPT_DIR/../tools/keys/update_signing_key.pem"
+    ROM_FD="$BUILD_OUT/../FV/OVMF_CODE.fd"
+    if [[ ! -f "$SIGNING_KEY" ]]; then
+        echo ""
+        echo "  (no signing key yet — run tools/generate_signing_key.py once, then rebuild"
+        echo "   to get a real fs1:\\data\\rom.ticket. Skipping ticket generation for now.)"
+    elif [[ ! -f "$ROM_FD" ]]; then
+        echo "  ✗ $ROM_FD not found — can't sign a ticket for it"
+    else
+        echo ""
+        echo "→ Signing this build's ROM..."
+        python3 "$SCRIPT_DIR/../tools/sign_rom_ticket.py" "$ROM_FD" --out "$DATA_DIR/rom.ticket"
+    fi
+
     # ---------- push into shared.img in place --------------------------------
     SHARED_IMG="$SCRIPT_DIR/shared.img"
     SHARED_SIZE_MB=256
