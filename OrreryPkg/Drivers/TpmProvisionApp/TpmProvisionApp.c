@@ -5,7 +5,7 @@
  * signed-ticket reprovisioning, replacing the old PCR16-only design):
  *   1. Flash good ROM (signed)                              [external — not this app]
  *   2. Boot                                                 [done — this is entry]
- *   3. Measure ROM -> extend PCR[16]                        [done]
+ *   3. Measure ROM -> extend PCR[15]                        [done]
  *   4. Set a real TPM_RH_OWNER auth (was NULL — issue #15)  [done]
  *   5. Compute the PolicyAuthorize digest (trial session)   [done]
  *   6. Define an NV index gated on that digest              [done]
@@ -15,7 +15,7 @@
  * The vault's rule (step 6's authPolicy) is keyed to a compiled-in
  * signing key's Name (TrustedUpdateKey.h) — not to any PCR value — so it
  * never has to change again. Every future firmware update just ships a
- * new signed ticket for its own PCR16 value; this app and
+ * new signed ticket for its own PCR15 value; this app and
  * TpmVerifyBootApp both run the same "prove this boot's ROM, then use
  * the resulting session" chain (RunAuthorizedPolicySession below) to
  * satisfy that fixed rule. See issue #15 for the full design writeup and
@@ -64,7 +64,10 @@
 
 /* ── constants ─────────────────────────────────────────────────────────── */
 
-#define PCR_FOR_BIOS      16                   // user-controlled, safe to extend
+#define PCR_FOR_BIOS      15                   // non-resettable (platform-reset only);
+                                                // outside the PC Client PFP's PCR0-7
+                                                // SRTM range to avoid firmware-phase
+                                                // collisions — see issue #27
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 
@@ -496,7 +499,7 @@ DefineSecretNvIndex (
  * session authorized to touch the NV index ───────────────────────────────
  * Shared by provisioning's write and (once written) TpmVerifyBootApp's
  * read — same chain either way:
- *   PolicyPCR (TPM reads its own live PCR16)
+ *   PolicyPCR (TPM reads its own live PCR15)
  *   -> GetDigest
  *   -> LoadExternal the compiled-in key
  *   -> read + unmarshal this boot's ticket
@@ -706,7 +709,7 @@ UefiMain (
 
   /* Step 2 (boot) is implicit — we're running.                            */
 
-  /* Step 3: Measure ROM -> extend PCR[16] */
+  /* Step 3: Measure ROM -> extend PCR[15] */
   Print (L"[PROVISION] Reading ROM image...\n");
   Status = ReadRomImage (&RomBuffer, &RomSize);
   if (EFI_ERROR (Status)) {

@@ -2,16 +2,16 @@
  * TpmVerifyBootApp.c
  *
  * "Reboot / No Update" verification flow (companion to TpmProvisionApp):
- *   1. Measure ROM -> extend PCR[16]                     [TODO]
+ *   1. Measure ROM -> extend PCR[15]                     [TODO]
  *   2. Load sealed blob from disk (fs1:\data\)            [TODO]
- *   3. Unseal (TPM checks PCR[16] + integrity)            [TODO]
+ *   3. Unseal (TPM checks PCR[15] + integrity)            [TODO]
  *   4. If success -> boot continues                       [TODO]
  *   5. If fail -> halt (BIOS modified!)                    [TODO]
  *
  * This app always measures the live ROM — there is no golden/reference
  * image to fall back to, on real hardware or here. To exercise the
  * tamper-detection path, flash a *different* ROM and re-run: step 1's
- * measurement produces a different PCR[16], so step 3's unseal is
+ * measurement produces a different PCR[15], so step 3's unseal is
  * expected to fail. To confirm the mechanism still succeeds, flash the
  * original ROM back and re-run.
  *
@@ -43,7 +43,10 @@
 #include <IndustryStandard/TpmPtp.h>
 
 /* ── constants ─────────────────────────────────────────────────────────── */
-#define PCR_FOR_BIOS  16
+#define PCR_FOR_BIOS  15                       // non-resettable (platform-reset only);
+                                                // outside the PC Client PFP's PCR0-7
+                                                // SRTM range to avoid firmware-phase
+                                                // collisions — see issue #27
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 

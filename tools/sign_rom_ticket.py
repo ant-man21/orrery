@@ -12,10 +12,11 @@ SHA256(rom)):
   inner    = SHA256(rom_bytes)
              what Tcg2->HashLogExtendEvent hashes when measuring the ROM
 
-  pcr16    = SHA256(0x00*32 || inner)
-             PCR16's value after that one extend, from a freshly-reset PCR
+  pcr_ext  = SHA256(0x00*32 || inner)
+             PCR15's value after that one extend, from a freshly-reset PCR
+             (PCR15 chosen over PCR16 for non-resettability — see issue #27)
 
-  pcrdig   = SHA256(pcr16)
+  pcrdig   = SHA256(pcr_ext)
              TPM2_PolicyPCR folds in PCRComputeCurrentDigest(), which is a
              hash of the concatenated selected PCR values — even with one
              PCR selected, this extra layer is real. Confirmed against
@@ -25,7 +26,7 @@ SHA256(rom)):
              the session-digest chaining formula TPM2_PolicyPCR applies:
              hash(oldDigest=0 || commandCode || marshalled TPML_PCR_SELECTION
              || pcrDigest). This is exactly what Tpm2PolicyGetDigest reads
-             back on-device — NOT the raw PCR16 value.
+             back on-device — NOT the raw PCR15 value.
 
   aHash    = SHA256(approved || policyRef)
              what TPM2_PolicyAuthorize actually checks the signature
@@ -37,10 +38,10 @@ ticket = RSASSA-PKCS1v1.5-SHA256(private_key, aHash)   — 256 raw bytes,
 no TPM wire-format wrapping. TpmVerifyBootApp reads these bytes directly
 into TPMT_SIGNATURE.signature.rsassa.sig.buffer.
 
-pcr_selection matches this codebase's BuildPcrSelection(16, ...)
+pcr_selection matches this codebase's BuildPcrSelection(15, ...)
 (OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.c) exactly: count=1,
-hash=TPM_ALG_SHA256, sizeofSelect=3, pcrSelect=[0x00, 0x00, 0x01]
-(PCR16 -> byte 16/8=2, bit 16%8=0).
+hash=TPM_ALG_SHA256, sizeofSelect=3, pcrSelect=[0x00, 0x80, 0x00]
+(PCR15 -> byte 15/8=1, bit 15%8=7).
 """
 
 import argparse
@@ -54,7 +55,7 @@ PRIVATE_KEY = REPO_ROOT / "tools" / "keys" / "update_signing_key.pem"
 
 TPM_CC_POLICY_PCR = 0x0000017F
 TPM_ALG_SHA256    = 0x000B
-PCR_FOR_BIOS      = 16
+PCR_FOR_BIOS      = 15
 
 # TPML_PCR_SELECTION wire bytes for {count=1, hash=SHA256, sizeofSelect=3,
 # pcrSelect=[selecting PCR_FOR_BIOS]} — must match BuildPcrSelection().
@@ -71,8 +72,8 @@ def pcr_selection_bytes(pcr_index: int) -> bytes:
 
 def compute_a_hash(rom_bytes: bytes) -> tuple[bytes, bytes, bytes, bytes, bytes]:
     inner    = hashlib.sha256(rom_bytes).digest()
-    pcr16    = hashlib.sha256(b"\x00" * 32 + inner).digest()
-    pcrdig   = hashlib.sha256(pcr16).digest()
+    pcr_ext  = hashlib.sha256(b"\x00" * 32 + inner).digest()
+    pcrdig   = hashlib.sha256(pcr_ext).digest()
     approved = hashlib.sha256(
         b"\x00" * 32
         + struct.pack(">I", TPM_CC_POLICY_PCR)
@@ -80,7 +81,7 @@ def compute_a_hash(rom_bytes: bytes) -> tuple[bytes, bytes, bytes, bytes, bytes]
         + pcrdig
     ).digest()
     a_hash = hashlib.sha256(approved).digest()   # policyRef is empty
-    return inner, pcr16, pcrdig, approved, a_hash
+    return inner, pcr_ext, pcrdig, approved, a_hash
 
 
 def sign(a_hash: bytes) -> bytes:
@@ -164,7 +165,7 @@ def main() -> None:
             f"(of {len(full_bytes)} total bytes in {args.rom})"
         )
 
-    inner, pcr16, pcrdig, approved, a_hash = compute_a_hash(rom_bytes)
+    inner, pcr_ext, pcrdig, approved, a_hash = compute_a_hash(rom_bytes)
     signature = sign(a_hash)
     self_check(a_hash, signature)
 
@@ -176,7 +177,7 @@ def main() -> None:
 
     print(f"ROM             : {args.rom}  ({len(rom_bytes)} bytes)")
     print(f"inner (SHA256)  : {hx(inner)}")
-    print(f"pcr16           : {hx(pcr16)}")
+    print(f"pcr_ext         : {hx(pcr_ext)}")
     print(f"pcrdig          : {hx(pcrdig)}")
     print(f"approved        : {hx(approved)}   <- compare against on-device Tpm2PolicyGetDigest")
     print(f"aHash           : {hx(a_hash)}")

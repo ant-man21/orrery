@@ -1,7 +1,7 @@
 /** @file
   Platform abstraction for "where is my own boot firmware volume" — the
   flash-resident FV containing the running firmware code, which
-  TpmProvisionApp/TpmVerifyBootApp measure into PCR[16] as "the ROM".
+  TpmProvisionApp/TpmVerifyBootApp measure into PCR[15] as "the ROM".
 
   Runtime discovery of this region was tried and abandoned twice (FV2/FVB2
   protocol enumeration, then GCD memory type) — see

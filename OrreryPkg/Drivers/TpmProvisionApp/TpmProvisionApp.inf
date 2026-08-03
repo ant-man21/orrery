@@ -3,8 +3,8 @@
 ## UEFI Application – "Setup First Boot" provisioning flow:
 ##   1. Init TPM / locate TCG2 protocol
 ##   2. Boot (unsigned for now)
-##   3. Measure ROM -> extend PCR[16]
-##   4. Compute PCR[16] policy digest
+##   3. Measure ROM -> extend PCR[15]
+##   4. Compute PCR[15] policy digest
 ##   5. Define NV index gated on that policy
 ##   6. Write the secret into it via a real policy session
 ##
