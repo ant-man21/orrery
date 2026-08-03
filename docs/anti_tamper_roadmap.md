@@ -110,6 +110,8 @@ below sketches a resealing flow for this, but it isn't built yet.
   *different* sandbox/CI runner still can't launch qemu, that's an
   environment-specific gap, not a project-wide constant — verify fresh
   in whatever environment you're actually in before assuming either way.
+  **This is now automated** — see `docs/testing.md` and
+  `tools/boot_test.sh`; CI boots the firmware headless on every PR.
 
 ## Phase 2 (done): seal the secret via TPM NVRAM, not a blob
 
