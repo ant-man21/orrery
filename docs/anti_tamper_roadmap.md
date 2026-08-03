@@ -90,11 +90,26 @@ below sketches a resealing flow for this, but it isn't built yet.
 - **`shared.img` / `uefi-shell.img` are static disk-image files, not a live
   host-folder mount.** Anything a UEFI app writes only shows up on the host
   after an explicit pull (`post-run.sh` for `data/`).
-- **This sandbox cannot run `qemu-system-x86_64`** (even headless, even with
-  `-display none` — gets killed outright). All testing/booting happens in
-  the user's own terminal on the same machine; a coding assistant working on
-  this project should verify via clean compilation and, where possible,
-  `debug.log`, not by attempting to launch QEMU itself.
+- **Update (issue #25, 2026-08-03): the "this sandbox cannot run qemu"
+  claim above was wrong, or at least stale for the Claude Code web/CCR
+  sandbox.** Verified directly in that environment: `qemu-system-x86_64
+  -machine q35,smm=on -display none -serial file:... -no-reboot` (plus
+  `swtpm`) boots fine, stays alive, and is cleanly bounded by a host-side
+  `timeout` — no kill. Went further and proved the full pipeline for
+  real: built Q35Pkg from scratch (had to `git submodule update --init`
+  edk2 and `make -C edk2/BaseTools` first — neither was pre-built), wrote
+  a `startup.nsh` that auto-runs `TpmProvisionApp.efi` with no human
+  input, and grepped the captured serial log for both the app's own
+  `=== TpmProvisionApp done (Success) ===` line and a custom sentinel
+  printed after it — both showed up, confirming a real provisioning run
+  (PCR extend, ticket verify, NV write) completed unattended and its
+  result is machine-checkable. `qemu.sh`'s `-display gtk` / `-serial
+  stdio` still need an actual `--headless` mode to make this repeatable
+  without hand-editing the launch command (see #25); this note is just
+  the "is it possible at all" answer, which is yes, at least here. If a
+  *different* sandbox/CI runner still can't launch qemu, that's an
+  environment-specific gap, not a project-wide constant — verify fresh
+  in whatever environment you're actually in before assuming either way.
 
 ## Phase 2 (done): seal the secret via TPM NVRAM, not a blob
 
