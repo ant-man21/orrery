@@ -1,6 +1,14 @@
 edk2/Build/
 Build/
 edk2/Conf/
+# Captured serial logs + generated startup.nsh from tools/boot_test.sh
+Q35Pkg/boot-test-logs/
+ArmVirtOrreryPkg/boot-test-logs/
+Q35Pkg/serial.log
+ArmVirtOrreryPkg/serial.log
+# Python test/tooling scratch
+__pycache__/
+.pytest_cache/
 Q35Pkg/chips/*/vars/
 Q35Pkg/chips/*/tpm/
 Q35Pkg/debug.log

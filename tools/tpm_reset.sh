@@ -14,6 +14,10 @@ if [ ${#tpm_dirs[@]} -eq 0 ]; then
 fi
 
 for dir in "${tpm_dirs[@]}"; do
+    # ArmVirtOrreryPkg/tpm is a literal path, not a glob, so nullglob can't
+    # drop it when it doesn't exist — on a checkout where that platform has
+    # never been run, `find` would error out on a missing directory.
+    [ -d "$dir" ] || continue
     chipset="$(basename "$(dirname "$dir")")"
     count=$(find "$dir" -mindepth 1 | wc -l)
     if [ "$count" -eq 0 ]; then

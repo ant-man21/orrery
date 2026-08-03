@@ -1,13 +1,31 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with Q35 firmware
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [--reset-shared] [--headless [opts]]
+#                  [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
 #   -m MEM          RAM in MB                   (default: 512)
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
+#
+# Headless / automation mode (issue #25):
+#   --headless          No GUI, no interactive serial. Implies -display none,
+#                       serial redirected to a file, and -no-reboot so a
+#                       triple-fault or reset ends the run instead of looping.
+#   --serial-log PATH   Where --headless writes the guest's serial console
+#                       (default: <script dir>/serial.log). This is the file a
+#                       test runner greps — debug.log only ever carries DEBUG()
+#                       output from the -debugcon port, which RELEASE builds
+#                       leave empty, and never carries what the UEFI shell or
+#                       an app's Print() puts on the serial console.
+#   --timeout SECS      Host-side wall-clock bound on the whole run
+#                       (default: 300). A hung or crashed boot has nothing else
+#                       to stop it. Exit code 124 means the timeout fired.
+#
+# Interactive mode (the default) is unchanged: GUI window, -serial stdio, and
+# a tail -f of debug.log that follows the QEMU process.
 #
 # Extra QEMU args can be appended after --
 #   e.g.  ./qemu.sh -d -- -cdrom my.iso
@@ -39,6 +57,9 @@ fi
 BUILD_TYPE="RELEASE"
 MEM_MB=512
 RESET_SHARED=0
+HEADLESS=0
+SERIAL_LOG=""
+TIMEOUT_SECS=300
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -52,6 +73,9 @@ while [[ $# -gt 0 ]]; do
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
+        --headless)     HEADLESS=1;           shift ;;
+        --serial-log)   SERIAL_LOG="$2";      shift 2 ;;
+        --timeout)      TIMEOUT_SECS="$2";    shift 2 ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
          *)             echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
@@ -61,6 +85,22 @@ done
 FV_DIR="$EDK2_DIR/$OUTPUT_DIR/${BUILD_TYPE}_${TOOLCHAIN}/FV"
 CODE_FD="$FV_DIR/OVMF_CODE.fd"
 VARS_SRC="$FV_DIR/OVMF_VARS.fd"
+
+# Defaulted here rather than up with the other defaults — it needs SCRIPT_DIR,
+# and callers may override it with --serial-log.
+: "${SERIAL_LOG:=$SCRIPT_DIR/serial.log}"
+
+if [[ "$HEADLESS" -eq 1 ]]; then
+    if ! command -v timeout &>/dev/null; then
+        echo "ERROR: --headless needs 'timeout' (coreutils) on PATH" >&2
+        exit 1
+    fi
+    # Start from a clean log: the runner greps this for a pass/fail sentinel,
+    # and a stale line from a previous run would be indistinguishable from a
+    # real one produced by this boot.
+    rm -f "$SERIAL_LOG"
+    mkdir -p "$(dirname "$SERIAL_LOG")"
+fi
 
 # ---------- sanity checks -----------------------------------------------------
 if [[ ! -f "$CODE_FD" ]]; then
@@ -160,32 +200,71 @@ echo "  CODE fd   : $CODE_FD"
 echo "  VARS fd   : $VARS_FD  (persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
 echo "  Host dir  : $SHARED_DIR"
+if [[ "$HEADLESS" -eq 1 ]]; then
+echo "  Mode      : HEADLESS (timeout ${TIMEOUT_SECS}s)"
+echo "  Serial    : $SERIAL_LOG"
+else
+echo "  Mode      : interactive (GUI + serial on stdio)"
+fi
 echo "============================================================"
 echo ""
 
-"$QEMU_BIN" \
-    -machine "$QEMU_MACHINE,smm=on" \
-    -cpu "$QEMU_CPU" \
-    -m "${MEM_MB}M" \
-    \
-    -drive if=pflash,format=raw,readonly=on,file="$CODE_FD" \
-    -drive if=pflash,format=raw,file="$VARS_FD" \
-    \
-    -global driver=cfi.pflash01,property=secure,value=on \
-    \
-    -serial stdio \
-    -display gtk \
-    -net none \
-    -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio \
-    -drive file="$SHARED_IMG",format=raw,if=virtio \
-    \
-    -debugcon file:debug.log \
-    -global isa-debugcon.iobase=0x402 \
-    \
-    -chardev socket,id=chrtpm,path=/tmp/swtpm-sock \
-    -tpmdev emulator,id=tpm0,chardev=chrtpm \
-    -device tpm-tis,tpmdev=tpm0 \
-    \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
+# Everything except the display/serial wiring is identical in both modes —
+# a headless run must exercise the same machine the interactive one does,
+# or it isn't testing what a human sees when they boot it by hand.
+QEMU_ARGS=(
+    -machine "$QEMU_MACHINE,smm=on"
+    -cpu "$QEMU_CPU"
+    -m "${MEM_MB}M"
+
+    -drive if=pflash,format=raw,readonly=on,file="$CODE_FD"
+    -drive if=pflash,format=raw,file="$VARS_FD"
+
+    -global driver=cfi.pflash01,property=secure,value=on
+
+    -net none
+    -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio
+    -drive file="$SHARED_IMG",format=raw,if=virtio
+
+    -debugcon "file:$SCRIPT_DIR/debug.log"
+    -global isa-debugcon.iobase=0x402
+
+    -chardev socket,id=chrtpm,path=/tmp/swtpm-sock
+    -tpmdev emulator,id=tpm0,chardev=chrtpm
+    -device tpm-tis,tpmdev=tpm0
+)
+
+if [[ "$HEADLESS" -eq 1 ]]; then
+    # -no-reboot: without it a guest reset silently restarts the boot inside
+    # the same QEMU process, so a crash-loop would burn the whole timeout and
+    # leave a serial log with N interleaved boots in it.
+    QEMU_ARGS+=(
+        -display none
+        -serial "file:$SERIAL_LOG"
+        -no-reboot
+    )
+    QEMU_ARGS+=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
+
+    set +e
+    timeout "$TIMEOUT_SECS" "$QEMU_BIN" "${QEMU_ARGS[@]}"
+    QEMU_RC=$?
+    set -e
+
+    if [[ "$QEMU_RC" -eq 124 ]]; then
+        echo "→ QEMU hit the ${TIMEOUT_SECS}s timeout and was killed." >&2
+        echo "  (Not necessarily a failure — the UEFI shell sits at its prompt" >&2
+        echo "   forever after startup.nsh finishes. Judge the run by the" >&2
+        echo "   contents of $SERIAL_LOG, not by this exit code.)" >&2
+    fi
+    exit "$QEMU_RC"
+fi
+
+QEMU_ARGS+=(
+    -serial stdio
+    -display gtk
+)
+QEMU_ARGS+=("${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}")
+
+"$QEMU_BIN" "${QEMU_ARGS[@]}" &
 QEMU_PID=$!
 tail -f "$SCRIPT_DIR/debug.log" --pid=$QEMU_PID
