@@ -445,6 +445,14 @@ ComputePolicyAuthorizeDigest (
  * POLICYWRITE|POLICYREAD (not AUTHWRITE/AUTHREAD) means the policy is the
  * only door — there is no password fallback into this index. Owner auth
  * (issue #15) gates who can undefine/redefine the index itself.
+ *
+ * WRITEDEFINE (issue #9) makes the write side one-shot: TPM2_NV_WriteLock
+ * refuses to lock an index that has neither WRITEDEFINE nor
+ * WRITE_STCLEAR set, so this attribute is what makes LockSecretNvIndex()
+ * below actually do anything. Once locked, anything that satisfies the
+ * PCR15+ticket policy can still *read* the secret, but nothing can
+ * overwrite it short of TPM_RH_OWNER redefining the index outright — that
+ * redefine path is the future OTA reseal flow (#6), not built yet.
  */
 STATIC EFI_STATUS
 DefineSecretNvIndex (
@@ -461,6 +469,7 @@ DefineSecretNvIndex (
   NvPublic.nvPublic.nameAlg   = TPM_ALG_SHA256;
   NvPublic.nvPublic.attributes.TPMA_NV_POLICYWRITE = 1;
   NvPublic.nvPublic.attributes.TPMA_NV_POLICYREAD  = 1;
+  NvPublic.nvPublic.attributes.TPMA_NV_WRITEDEFINE = 1;
   NvPublic.nvPublic.authPolicy.size = PolicyDigest->size;
   CopyMem (NvPublic.nvPublic.authPolicy.buffer, PolicyDigest->buffer, PolicyDigest->size);
   NvPublic.nvPublic.dataSize  = SECRET_LEN;
@@ -649,6 +658,35 @@ GenerateRandomSecret (
   return EFI_SUCCESS;
 }
 
+/* ── helper: lock the secret's NV index against further writes (issue #9)
+ * ─────────────────────────────────────────────────────────────────────
+ * TPM_RH_OWNER authorizes the lock directly — this is deliberately
+ * independent of the index's own PolicyAuthorize gate, so locking doesn't
+ * require re-proving this boot's ROM. Once TPM2_NV_WriteLock sets
+ * TPMA_NV_WRITELOCKED, it stays set until the index is undefined and
+ * redefined (owner-authorized, same as DefineSecretNvIndex above) — there
+ * is no "unlock" command.
+ */
+STATIC EFI_STATUS
+LockSecretNvIndex (
+  VOID
+  )
+{
+  EFI_STATUS         Status;
+  TPMS_AUTH_COMMAND   OwnerAuthSession;
+
+  BuildOwnerAuthSession (&OwnerAuthSession);
+
+  Status = Tpm2NvWriteLock (TPM_RH_OWNER, SECRET_NV_INDEX, &OwnerAuthSession);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2NvWriteLock failed: %r\n", Status);
+  } else {
+    Print (L"[PROVISION] NV index 0x%x write-locked — no further writes until redefined\n", SECRET_NV_INDEX);
+  }
+
+  return Status;
+}
+
 /* ── helper: write the secret using an already-authorized session ──────── */
 STATIC EFI_STATUS
 WriteSecretToNvIndex (
@@ -676,6 +714,11 @@ WriteSecretToNvIndex (
   }
 
   Tpm2FlushContext (Session);
+
+  if (!EFI_ERROR (Status)) {
+    Status = LockSecretNvIndex ();
+  }
+
   return Status;
 }
 
