@@ -19,6 +19,16 @@
 #   (re)created here if it doesn't exist yet.
 #   From the UEFI shell those are visible as:
 #     fs1:\apps\TpmProvisionApp.efi   (etc.)
+#
+#   The freshly-built OVMF_CODE.fd is also signed (tools/sign_rom_ticket.py)
+#   into Q35Pkg/shared/data/rom.ticket and pushed the same way, so it shows
+#   up as fs1:\data\rom.ticket — issue #15's signed-ticket reprovisioning.
+#   Skipped with a warning (not a build failure) if tools/keys/ has no
+#   signing key yet — run tools/generate_signing_key.py once, manually,
+#   before this can produce a real ticket. That key generation step is
+#   never part of this script: a new key here would orphan every already-
+#   provisioned device's vault (its Name is baked into the NV index's
+#   authPolicy permanently).
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -150,10 +160,31 @@ if [[ "$SYNC" -eq 1 ]]; then
         done
     fi
 
+    # ---------- sign this build's ROM -> shared/data/rom.ticket --------------
+    # issue #15: TpmVerifyBootApp (and TpmProvisionApp's write) need a ticket
+    # for the exact ROM they're about to measure. Regenerated every build,
+    # since a new ROM needs a new ticket — unlike the signing key itself,
+    # which is one-time and never touched here.
+    DATA_DIR="$SCRIPT_DIR/shared/data"
+    mkdir -p "$DATA_DIR"
+
+    SIGNING_KEY="$SCRIPT_DIR/../tools/keys/update_signing_key.pem"
+    ROM_FD="$BUILD_OUT/../FV/OVMF_CODE.fd"
+    if [[ ! -f "$SIGNING_KEY" ]]; then
+        echo ""
+        echo "  (no signing key yet — run tools/generate_signing_key.py once, then rebuild"
+        echo "   to get a real fs1:\\data\\rom.ticket. Skipping ticket generation for now.)"
+    elif [[ ! -f "$ROM_FD" ]]; then
+        echo "  ✗ $ROM_FD not found — can't sign a ticket for it"
+    else
+        echo ""
+        echo "→ Signing this build's ROM..."
+        python3 "$SCRIPT_DIR/../tools/sign_rom_ticket.py" "$ROM_FD" --out "$DATA_DIR/rom.ticket"
+    fi
+
     # ---------- push into shared.img in place --------------------------------
     SHARED_IMG="$SCRIPT_DIR/shared.img"
     SHARED_SIZE_MB=256
-    mkdir -p "$SCRIPT_DIR/shared/data"
 
     if [[ ! -f "$SHARED_IMG" ]]; then
         echo "→ shared.img not found — creating fresh (${SHARED_SIZE_MB} MB FAT32)..."
@@ -164,10 +195,16 @@ if [[ "$SYNC" -eq 1 ]]; then
     else
         shopt -s nullglob
         apps=("$APPS_DIR"/*)
+        data=("$DATA_DIR"/*)
         shopt -u nullglob
         if [[ ${#apps[@]} -gt 0 ]]; then
-            echo "→ Pushing into shared.img (existing files preserved)..."
+            echo "→ Pushing apps/ into shared.img (existing files preserved)..."
             mcopy -o -i "$SHARED_IMG" "${apps[@]}" ::apps/
+            echo "✓ shared.img updated → $SHARED_IMG"
+        fi
+        if [[ ${#data[@]} -gt 0 ]]; then
+            echo "→ Pushing data/ into shared.img (existing files preserved)..."
+            mcopy -o -i "$SHARED_IMG" "${data[@]}" ::data/
             echo "✓ shared.img updated → $SHARED_IMG"
         fi
     fi

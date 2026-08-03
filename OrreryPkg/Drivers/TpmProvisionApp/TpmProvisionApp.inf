@@ -45,19 +45,24 @@
   BaseMemoryLib                   ## ZeroMem, CopyMem, CompareMem
   MemoryAllocationLib             ## AllocateZeroPool, FreePool
   PrintLib                        ## SPrint
-  Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite …
+  Tpm2CommandLib                  ## Tpm2PcrRead, Tpm2NvDefineSpace, Tpm2NvWrite, Tpm2HierarchyChangeAuth …
   Tpm2PolicyPcrLib                ## Tpm2PolicyPCR (OrreryPkg-local — see its header)
   Tpm2PcrLib                      ## BuildPcrSelection/OpenPcrPolicySession/ExtendPcr (OrreryPkg-local, shared with TpmVerifyBootApp)
+  Tpm2PolicyAuthorizeLib          ## Tpm2LoadExternal/Tpm2VerifySignature/Tpm2PolicyAuthorize (OrreryPkg-local — issue #15)
   Tpm2DeviceLib                   ## low-level TPM device abstraction
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   PlatformRomInfoLib              ## where's my own flash ROM (OrreryPkg-local, platform-specific instance — see docs/rom_discovery_story.md)
+  RngLib                          ## GetRandomNumber128 (random secret — issue #15)
   DebugLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
+  gEfiSimpleFileSystemProtocolGuid       ## CONSUMES  (read the update ticket off the shared volume — issue #15)
 
 [Guids]
   gEfiTpmDeviceInstanceTpm20DtpmGuid     ## for TPM device selection
+  gEfiFileInfoGuid                       ## EFI_FILE_INFO (ticket file size)
+  gEfiFileSystemInfoGuid                 ## EFI_FILE_SYSTEM_INFO (locate volume by FAT label)
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

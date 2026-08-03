@@ -1,28 +1,34 @@
 /**
  * TpmProvisionApp.c
  *
- * "Setup First Boot" provisioning flow:
- *   1. Flash good ROM (signed)                            [external — not this app]
- *   2. Boot                                               [done — this is entry]
- *   3. Measure ROM -> extend PCR[16]                      [done]
- *   4. Compute PCR[16] policy digest (trial session)      [done]
- *   5. Define an NV index gated on that policy            [done]
- *   6. Write the secret into it via a real policy session [done]
- *   7. Store public key in TPM NVRAM (write-once)         [future]
+ * "Setup First Boot" provisioning flow (issue #15 — PolicyAuthorize
+ * signed-ticket reprovisioning, replacing the old PCR16-only design):
+ *   1. Flash good ROM (signed)                              [external — not this app]
+ *   2. Boot                                                 [done — this is entry]
+ *   3. Measure ROM -> extend PCR[16]                        [done]
+ *   4. Set a real TPM_RH_OWNER auth (was NULL — issue #15)  [done]
+ *   5. Compute the PolicyAuthorize digest (trial session)   [done]
+ *   6. Define an NV index gated on that digest              [done]
+ *   7. Prove this boot's ROM against its ticket, then write
+ *      a random secret via the resulting real session       [done]
  *
- * Steps 4-6 are ProvisionSecretInNvram() below.
+ * The vault's rule (step 6's authPolicy) is keyed to a compiled-in
+ * signing key's Name (TrustedUpdateKey.h) — not to any PCR value — so it
+ * never has to change again. Every future firmware update just ships a
+ * new signed ticket for its own PCR16 value; this app and
+ * TpmVerifyBootApp both run the same "prove this boot's ROM, then use
+ * the resulting session" chain (RunAuthorizedPolicySession below) to
+ * satisfy that fixed rule. See issue #15 for the full design writeup and
+ * threat model.
  *
  * Demo flow: this app runs once, against a wiped/clean TPM, to define the
- * NV index and seal the secret to PCR[16]. Every subsequent boot runs
+ * NV index and seal the secret. Every subsequent boot runs
  * TpmVerifyBootApp instead, which measures the live ROM only — there is
  * no golden/reference image on real hardware, so none is used here either.
  *
- * Open question: re-running this app against an already-provisioned TPM
- * (e.g. after a legitimate firmware update changes PCR[16]) currently
- * fails the NV write step silently, since the index is still gated on the
- * old policy. See issue #5 (OTA research) for the re-provisioning story.
- *
- * Companion app: TpmVerifyBootApp (reboot / unseal / tamper-detect flow).
+ * Companion app: TpmVerifyBootApp (reboot / unseal / tamper-detect flow) —
+ * shares this same authorization chain, swapping the final Tpm2NvWrite
+ * for a Tpm2NvRead.
  *
  * Build: UEFI application (not a driver). Load it from the UEFI shell:
  *   Shell> fs1:\apps\TpmProvisionApp.efi
@@ -36,24 +42,53 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseCryptLib.h>
+#include <Library/RngLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
 #include <Library/PlatformRomInfoLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
+#include <Protocol/SimpleFileSystem.h>
+#include <Guid/FileInfo.h>
+#include <Guid/FileSystemInfo.h>
 
 #include <Library/Tpm2CommandLib.h>
 #include <Library/Tpm2DeviceLib.h>
 #include <Library/Tpm2PolicyPcrLib.h>
 #include <Library/Tpm2PcrLib.h>
+#include <Library/Tpm2PolicyAuthorizeLib.h>
 #include <IndustryStandard/Tpm20.h>
 #include <IndustryStandard/TpmPtp.h>
+
+#include <TrustedUpdateKey.h>
+
 /* ── constants ─────────────────────────────────────────────────────────── */
 
 #define PCR_FOR_BIOS      16                   // user-controlled, safe to extend
-#define SECRET_STRING     "hello"
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
+
+#define SHARED_VOLUME_LABEL  L"SHARED"
+#define UPDATE_TICKET_PATH   L"\\data\\rom.ticket"
+
+/*
+ * Compiled-constant TPM_RH_OWNER auth — closes the "anyone can act as
+ * Owner for free" hole from the previous NULL/empty auth (issue #15):
+ * without this, anything on the box could undefine/redefine the NV index
+ * under its own rule, bypassing PolicyAuthorize entirely.
+ *
+ * Caveat, carried forward deliberately rather than solved here: this
+ * password is only as secret as the ROM itself — anyone who can dump
+ * flash can read it too. It still forecloses the *free, no-effort*
+ * empty-auth attack. Real defense against a stolen-owner-auth
+ * redefine-and-fake-the-secret attack is GenerateRandomSecret() below —
+ * a redefined index still can't produce a secret worth having, since the
+ * real one is never written down anywhere an attacker can read it. A
+ * stronger fix (TPM_RH_PLATFORM + TPMA_NV_POLICY_DELETE, making the
+ * index literally undeletable) is a separate, riskier change — deferred.
+ */
+#define OWNER_AUTH_STRING  "orrery-owner-auth-v1"
+
 EFI_TCG2_PROTOCOL  *Tcg2;
 
 /* ── helper: print TCG2 capabilities ───────────────────────────────────── */
@@ -137,20 +172,233 @@ ReadRomImage (
   return EFI_SUCCESS;
 }
 
-/* ── helper: compute the PCR[16] policy digest via a trial session ───────
- * This is the "what value should lock the NV index" leg — nothing is
- * actually authorized here, we're just asking the TPM to precompute the
- * digest that a real session satisfying the same assertion would produce.
+/* ── helper: locate the shared FAT volume by label ───────────────────────
+ * fs0:/fs1: enumeration order is not stable across boots or handles, so
+ * identify the shared volume by its FAT label ("SHARED", matching
+ * qemu.sh's `mformat -v SHARED`) rather than assuming a fixed handle
+ * index — same caution already documented for this project's file I/O.
  */
 STATIC EFI_STATUS
-ComputePcr16PolicyDigest (
-  OUT TPM2B_DIGEST  *PolicyDigest
+LocateSharedVolume (
+  OUT EFI_FILE_PROTOCOL  **Root
   )
 {
-  EFI_STATUS            Status;
-  TPMI_SH_AUTH_SESSION  TrialSession;
-  TPML_PCR_SELECTION    Pcrs;
-  TPM2B_DIGEST          EmptyPcrDigest;
+  EFI_STATUS                        Status;
+  EFI_HANDLE                        *Handles;
+  UINTN                              NumHandles;
+  UINTN                              Index;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   *Fs;
+  EFI_FILE_PROTOCOL                 *CandidateRoot;
+  EFI_FILE_SYSTEM_INFO              *FsInfo;
+  UINTN                              FsInfoSize;
+
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiSimpleFileSystemProtocolGuid,
+                  NULL,
+                  &NumHandles,
+                  &Handles
+                  );
+  if (EFI_ERROR (Status) || (NumHandles == 0)) {
+    Print (L"[PROVISION] No filesystem volumes found: %r\n", Status);
+    return EFI_ERROR (Status) ? Status : EFI_NOT_FOUND;
+  }
+
+  for (Index = 0; Index < NumHandles; Index++) {
+    Status = gBS->HandleProtocol (Handles[Index], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    Status = Fs->OpenVolume (Fs, &CandidateRoot);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    FsInfoSize = 0;
+    Status     = CandidateRoot->GetInfo (CandidateRoot, &gEfiFileSystemInfoGuid, &FsInfoSize, NULL);
+    if (Status != EFI_BUFFER_TOO_SMALL) {
+      CandidateRoot->Close (CandidateRoot);
+      continue;
+    }
+
+    FsInfo = AllocatePool (FsInfoSize);
+    if (FsInfo == NULL) {
+      CandidateRoot->Close (CandidateRoot);
+      continue;
+    }
+
+    Status = CandidateRoot->GetInfo (CandidateRoot, &gEfiFileSystemInfoGuid, &FsInfoSize, FsInfo);
+    if (EFI_ERROR (Status) || (StrCmp (FsInfo->VolumeLabel, SHARED_VOLUME_LABEL) != 0)) {
+      FreePool (FsInfo);
+      CandidateRoot->Close (CandidateRoot);
+      continue;
+    }
+
+    FreePool (FsInfo);
+    FreePool (Handles);
+    *Root = CandidateRoot;
+    return EFI_SUCCESS;
+  }
+
+  FreePool (Handles);
+  Print (L"[PROVISION] No filesystem volume labeled \"%s\" found\n", SHARED_VOLUME_LABEL);
+  return EFI_NOT_FOUND;
+}
+
+/* ── helper: read the update ticket off the shared volume ────────────────
+ * The ticket must live outside anything ReadRomImage measures — a
+ * firmware volume containing its own certifying ticket is a fixpoint
+ * that can never be satisfied. A plain FAT file sidesteps that; see
+ * tools/sign_rom_ticket.py, which writes this exact file.
+ */
+STATIC EFI_STATUS
+ReadTicketFile (
+  OUT VOID   **TicketBuffer,
+  OUT UINTN   *TicketSize
+  )
+{
+  EFI_STATUS          Status;
+  EFI_FILE_PROTOCOL   *Root;
+  EFI_FILE_PROTOCOL   *File;
+  EFI_FILE_INFO        *FileInfo;
+  UINTN                FileInfoSize;
+  UINTN                ReadSize;
+
+  Status = LocateSharedVolume (&Root);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = Root->Open (Root, &File, UPDATE_TICKET_PATH, EFI_FILE_MODE_READ, 0);
+  Root->Close (Root);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Open %s failed: %r\n", UPDATE_TICKET_PATH, Status);
+    return Status;
+  }
+
+  FileInfoSize = 0;
+  Status       = File->GetInfo (File, &gEfiFileInfoGuid, &FileInfoSize, NULL);
+  if (Status != EFI_BUFFER_TOO_SMALL) {
+    File->Close (File);
+    return EFI_ERROR (Status) ? Status : EFI_DEVICE_ERROR;
+  }
+
+  FileInfo = AllocatePool (FileInfoSize);
+  if (FileInfo == NULL) {
+    File->Close (File);
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = File->GetInfo (File, &gEfiFileInfoGuid, &FileInfoSize, FileInfo);
+  if (EFI_ERROR (Status)) {
+    FreePool (FileInfo);
+    File->Close (File);
+    return Status;
+  }
+
+  ReadSize = (UINTN)FileInfo->FileSize;
+  FreePool (FileInfo);
+
+  *TicketBuffer = AllocatePool (ReadSize);
+  if (*TicketBuffer == NULL) {
+    File->Close (File);
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = File->Read (File, &ReadSize, *TicketBuffer);
+  File->Close (File);
+  if (EFI_ERROR (Status)) {
+    FreePool (*TicketBuffer);
+    return Status;
+  }
+
+  *TicketSize = ReadSize;
+  return EFI_SUCCESS;
+}
+
+/* ── helper: set a real TPM_RH_OWNER auth (was NULL — issue #15) ───────── */
+STATIC EFI_STATUS
+SetOwnerAuth (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+  TPM2B_AUTH  NewAuth;
+
+  ZeroMem (&NewAuth, sizeof (NewAuth));
+  NewAuth.size = sizeof (OWNER_AUTH_STRING) - 1;
+  CopyMem (NewAuth.buffer, OWNER_AUTH_STRING, NewAuth.size);
+
+  Status = Tpm2HierarchyChangeAuth (TPM_RH_OWNER, NULL, &NewAuth);
+  if (EFI_ERROR (Status)) {
+    Print (
+      L"[PROVISION] Tpm2HierarchyChangeAuth failed: %r\n"
+      L"[PROVISION] Owner auth may already be set from a previous run —\n"
+      L"[PROVISION] wipe the TPM state (swtpm dir) and re-provision from clean.\n",
+      Status
+      );
+  }
+
+  return Status;
+}
+
+STATIC VOID
+BuildOwnerAuthSession (
+  OUT TPMS_AUTH_COMMAND  *AuthSession
+  )
+{
+  ZeroMem (AuthSession, sizeof (*AuthSession));
+  AuthSession->sessionHandle = TPM_RS_PW;
+  AuthSession->hmac.size     = sizeof (OWNER_AUTH_STRING) - 1;
+  CopyMem (AuthSession->hmac.buffer, OWNER_AUTH_STRING, AuthSession->hmac.size);
+}
+
+/* ── helper: aHash = SHA256(ApprovedPolicy || PolicyRef) ──────────────────
+ * This — NOT the raw ApprovedPolicy digest — is what TPM2_PolicyAuthorize
+ * actually checks the signature against internally (confirmed against
+ * ms-tpm-20-ref's PolicyAuthorize.c: "aHash := hash(approvedPolicy ||
+ * policyRef)"), and so what Tpm2VerifySignature must be called with. It's
+ * exactly what tools/sign_rom_ticket.py computes and signs offline —
+ * this must match it byte-for-byte or the ticket will never verify.
+ */
+STATIC VOID
+ComputeAHash (
+  IN  TPM2B_DIGEST  *ApprovedPolicy,
+  IN  TPM2B_NONCE   *PolicyRef,
+  OUT TPM2B_DIGEST  *AHash
+  )
+{
+  UINT8  Concat[sizeof (ApprovedPolicy->buffer) + sizeof (PolicyRef->buffer)];
+  UINTN  ConcatLen;
+
+  CopyMem (Concat, ApprovedPolicy->buffer, ApprovedPolicy->size);
+  ConcatLen = ApprovedPolicy->size;
+  CopyMem (Concat + ConcatLen, PolicyRef->buffer, PolicyRef->size);
+  ConcatLen += PolicyRef->size;
+
+  AHash->size = SHA256_DIGEST_SIZE;
+  Sha256HashAll (Concat, ConcatLen, AHash->buffer);
+}
+
+/* ── helper: compute the PolicyAuthorize digest via a trial session ──────
+ * Unlike the old PCR-only design, this has NO PolicyPCR in it at all —
+ * the trial digest depends only on the signing key's Name. That's the
+ * whole mechanism: the vault's rule, set here once, never has to change
+ * when firmware updates; only the per-update ticket does. See issue #15.
+ */
+STATIC EFI_STATUS
+ComputePolicyAuthorizeDigest (
+  OUT TPM2B_DIGEST  *AuthPolicy
+  )
+{
+  EFI_STATUS             Status;
+  TPMI_SH_AUTH_SESSION   TrialSession;
+  TPM_HANDLE              KeyHandle;
+  TPM2B_NAME              KeyName;
+  TPM2B_DIGEST            EmptyApprovedPolicy;
+  TPM2B_NONCE             EmptyPolicyRef;
+  TPMT_TK_VERIFIED        NullTicket;
 
   Status = OpenPcrPolicySession (TPM_SE_TRIAL, &TrialSession);
   if (EFI_ERROR (Status)) {
@@ -158,37 +406,52 @@ ComputePcr16PolicyDigest (
     return Status;
   }
 
-  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
-  ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));   /* size=0 -> TPM uses live PCR value */
-
-  Status = Tpm2PolicyPCR (TrialSession, &EmptyPcrDigest, &Pcrs);
+  Status = Tpm2LoadExternal (&gTrustedUpdateKey, &KeyHandle, &KeyName);
   if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Tpm2PolicyPCR (trial) failed: %r\n", Status);
+    Print (L"[PROVISION] Tpm2LoadExternal (trial) failed: %r\n", Status);
     Tpm2FlushContext (TrialSession);
     return Status;
   }
 
-  Status = Tpm2PolicyGetDigest (TrialSession, PolicyDigest);
+  ZeroMem (&EmptyApprovedPolicy, sizeof (EmptyApprovedPolicy));   /* trial session has no prior PolicyPCR step */
+  ZeroMem (&EmptyPolicyRef, sizeof (EmptyPolicyRef));
+  ZeroMem (&NullTicket, sizeof (NullTicket));
+  NullTicket.tag       = TPM_ST_VERIFIED;
+  NullTicket.hierarchy = TPM_RH_NULL;   /* trial sessions skip ticket validation entirely */
+
+  Status = Tpm2PolicyAuthorize (TrialSession, &EmptyApprovedPolicy, &EmptyPolicyRef, &KeyName, &NullTicket);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2PolicyAuthorize (trial) failed: %r\n", Status);
+    Tpm2FlushContext (KeyHandle);
+    Tpm2FlushContext (TrialSession);
+    return Status;
+  }
+
+  Status = Tpm2PolicyGetDigest (TrialSession, AuthPolicy);
   if (EFI_ERROR (Status)) {
     Print (L"[PROVISION] Tpm2PolicyGetDigest failed: %r\n", Status);
   }
 
+  Tpm2FlushContext (KeyHandle);
   Tpm2FlushContext (TrialSession);
   return Status;
 }
 
-/* ── helper: define the secret's NV index, gated on the PCR[16] policy ──
+/* ── helper: define the secret's NV index, gated on the PolicyAuthorize
+ * digest ───────────────────────────────────────────────────────────────
  * POLICYWRITE|POLICYREAD (not AUTHWRITE/AUTHREAD) means the policy is the
- * only door — there is no password fallback into this index.
+ * only door — there is no password fallback into this index. Owner auth
+ * (issue #15) gates who can undefine/redefine the index itself.
  */
 STATIC EFI_STATUS
 DefineSecretNvIndex (
   IN TPM2B_DIGEST  *PolicyDigest
   )
 {
-  EFI_STATUS       Status;
-  TPM2B_NV_PUBLIC  NvPublic;
-  TPM2B_AUTH       IndexAuth;
+  EFI_STATUS         Status;
+  TPM2B_NV_PUBLIC     NvPublic;
+  TPM2B_AUTH          IndexAuth;
+  TPMS_AUTH_COMMAND   OwnerAuthSession;
 
   ZeroMem (&NvPublic, sizeof (NvPublic));
   NvPublic.nvPublic.nvIndex   = SECRET_NV_INDEX;
@@ -214,8 +477,9 @@ DefineSecretNvIndex (
                     );
 
   ZeroMem (&IndexAuth, sizeof (IndexAuth));   /* no index password — policy only */
+  BuildOwnerAuthSession (&OwnerAuthSession);
 
-  Status = Tpm2NvDefineSpace (TPM_RH_OWNER, NULL, &IndexAuth, &NvPublic);
+  Status = Tpm2NvDefineSpace (TPM_RH_OWNER, &OwnerAuthSession, &IndexAuth, &NvPublic);
   if (Status == EFI_ALREADY_STARTED) {
     Print (L"[PROVISION] NV index 0x%x already defined — reusing it\n", SECRET_NV_INDEX);
     return EFI_SUCCESS;
@@ -228,22 +492,39 @@ DefineSecretNvIndex (
   return Status;
 }
 
-/* ── helper: prove PCR[16] live, then write the secret into the index ───
- * The real (non-trial) leg: same assertion as the trial run, but this
- * time it's actually checked against the TPM's current PCR[16].
+/* ── helper: prove this boot's ROM against its ticket, and hand back a
+ * session authorized to touch the NV index ───────────────────────────────
+ * Shared by provisioning's write and (once written) TpmVerifyBootApp's
+ * read — same chain either way:
+ *   PolicyPCR (TPM reads its own live PCR16)
+ *   -> GetDigest
+ *   -> LoadExternal the compiled-in key
+ *   -> read + unmarshal this boot's ticket
+ *   -> VerifySignature (does the ticket sign THIS digest?)
+ *   -> PolicyAuthorize (swap the session's digest for "approved by KeyName")
+ * Not factored into the shared library yet — per this project's own
+ * convention (see Tpm2PcrLib / issue #8), duplication gets factored out
+ * once it's needed twice for real, not before. TpmVerifyBootApp will be
+ * the second, real use.
  */
 STATIC EFI_STATUS
-WriteSecretToNvIndex (
-  IN UINT8  *Secret,
-  IN UINTN   SecretLen
+RunAuthorizedPolicySession (
+  OUT TPMI_SH_AUTH_SESSION  *SessionOut
   )
 {
-  EFI_STATUS            Status;
-  TPMI_SH_AUTH_SESSION  RealSession;
-  TPML_PCR_SELECTION    Pcrs;
-  TPM2B_DIGEST          EmptyPcrDigest;
-  TPMS_AUTH_COMMAND     AuthSession;
-  TPM2B_MAX_BUFFER       InData;
+  EFI_STATUS             Status;
+  TPMI_SH_AUTH_SESSION   RealSession;
+  TPML_PCR_SELECTION     Pcrs;
+  TPM2B_DIGEST            EmptyPcrDigest;
+  TPM2B_DIGEST            PolicyDigestAfterPcr;
+  TPM_HANDLE              KeyHandle;
+  TPM2B_NAME              KeyName;
+  VOID                    *TicketBuffer;
+  UINTN                   TicketSize;
+  TPMT_SIGNATURE          Signature;
+  TPM2B_DIGEST            AHash;
+  TPMT_TK_VERIFIED        CheckTicket;
+  TPM2B_NONCE             EmptyPolicyRef;
 
   Status = OpenPcrPolicySession (TPM_SE_POLICY, &RealSession);
   if (EFI_ERROR (Status)) {
@@ -256,13 +537,129 @@ WriteSecretToNvIndex (
 
   Status = Tpm2PolicyPCR (RealSession, &EmptyPcrDigest, &Pcrs);
   if (EFI_ERROR (Status)) {
-    Print (L"[PROVISION] Tpm2PolicyPCR (real) failed: %r\n", Status);
+    Print (L"[PROVISION] Tpm2PolicyPCR failed: %r\n", Status);
     Tpm2FlushContext (RealSession);
     return Status;
   }
 
+  Status = Tpm2PolicyGetDigest (RealSession, &PolicyDigestAfterPcr);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2PolicyGetDigest failed: %r\n", Status);
+    Tpm2FlushContext (RealSession);
+    return Status;
+  }
+
+  Status = Tpm2LoadExternal (&gTrustedUpdateKey, &KeyHandle, &KeyName);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2LoadExternal failed: %r\n", Status);
+    Tpm2FlushContext (RealSession);
+    return Status;
+  }
+
+  Status = ReadTicketFile (&TicketBuffer, &TicketSize);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] ReadTicketFile failed: %r — is %s on the shared volume?\n", Status, UPDATE_TICKET_PATH);
+    Tpm2FlushContext (KeyHandle);
+    Tpm2FlushContext (RealSession);
+    return Status;
+  }
+
+  if (TicketSize != gTrustedUpdateKey.publicArea.unique.rsa.size) {
+    Print (
+      L"[PROVISION] Ticket is %u bytes, expected %u (RSA-2048 signature size) — wrong file?\n",
+      (UINT32)TicketSize,
+      gTrustedUpdateKey.publicArea.unique.rsa.size
+      );
+    FreePool (TicketBuffer);
+    Tpm2FlushContext (KeyHandle);
+    Tpm2FlushContext (RealSession);
+    return EFI_INVALID_PARAMETER;
+  }
+
+  ZeroMem (&Signature, sizeof (Signature));
+  Signature.sigAlg                = TPM_ALG_RSASSA;
+  Signature.signature.rsassa.hash = TPM_ALG_SHA256;
+  Signature.signature.rsassa.sig.size = (UINT16)TicketSize;
+  CopyMem (Signature.signature.rsassa.sig.buffer, TicketBuffer, TicketSize);
+  FreePool (TicketBuffer);
+
+  /* Same empty PolicyRef feeds both calls below — must match exactly
+   * what tools/sign_rom_ticket.py used (empty) in ComputeAHash, and must
+   * be the same value passed to Tpm2PolicyAuthorize afterward. */
+  ZeroMem (&EmptyPolicyRef, sizeof (EmptyPolicyRef));
+
+  /* Must verify aHash, not the raw PolicyDigestAfterPcr — see ComputeAHash. */
+  ComputeAHash (&PolicyDigestAfterPcr, &EmptyPolicyRef, &AHash);
+
+  Status = Tpm2VerifySignature (KeyHandle, &AHash, &Signature, &CheckTicket);
+  Tpm2FlushContext (KeyHandle);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2VerifySignature failed: %r — ticket doesn't match this ROM, or is forged\n", Status);
+    Tpm2FlushContext (RealSession);
+    return Status;
+  }
+
+  Status = Tpm2PolicyAuthorize (RealSession, &PolicyDigestAfterPcr, &EmptyPolicyRef, &KeyName, &CheckTicket);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2PolicyAuthorize failed: %r\n", Status);
+    Tpm2FlushContext (RealSession);
+    return Status;
+  }
+
+  *SessionOut = RealSession;
+  return EFI_SUCCESS;
+}
+
+/* ── helper: fill Secret with real randomness (was the fixed string
+ * "hello" — issue #15) ──────────────────────────────────────────────────
+ * A hardcoded secret is forgeable by anyone who reads it out of the ROM;
+ * randomness generated once, on-device, at N=0 never appears in any ROM
+ * for an attacker to fake convincingly.
+ *
+ * CAVEAT: this platform's DSC (via the inherited OvmfPkgX64.dsc)
+ * resolves RngLib to MdeModulePkg/Library/BaseRngLibTimerLib, whose own
+ * doc comment says outright: "Do NOT use this on a production system...
+ * weak random algorithm" (it's timer-jitter-based, not a hardware TRNG).
+ * That's a real limitation on this fix's strength, not just this
+ * function's problem — closes the "secret is a string literal anyone
+ * can read out of the ROM" hole, but the replacement isn't
+ * cryptographically strong either. Fine for demonstrating the
+ * mechanism; swap the platform's RngLib mapping before this matters for
+ * real.
+ */
+STATIC EFI_STATUS
+GenerateRandomSecret (
+  OUT UINT8  *Secret,
+  IN  UINTN   SecretLen
+  )
+{
+  UINT64  RandomBytes[2];   /* GetRandomNumber128 fills 16 bytes */
+
+  ASSERT (SecretLen <= sizeof (RandomBytes));
+
+  if (!GetRandomNumber128 (RandomBytes)) {
+    DEBUG ((DEBUG_ERROR, "GenerateRandomSecret: GetRandomNumber128 failed\n"));
+    return EFI_DEVICE_ERROR;
+  }
+
+  CopyMem (Secret, RandomBytes, SecretLen);
+  return EFI_SUCCESS;
+}
+
+/* ── helper: write the secret using an already-authorized session ──────── */
+STATIC EFI_STATUS
+WriteSecretToNvIndex (
+  IN TPMI_SH_AUTH_SESSION  Session,
+  IN UINT8                 *Secret,
+  IN UINTN                  SecretLen
+  )
+{
+  EFI_STATUS           Status;
+  TPMS_AUTH_COMMAND     AuthSession;
+  TPM2B_MAX_BUFFER      InData;
+
   ZeroMem (&AuthSession, sizeof (AuthSession));
-  AuthSession.sessionHandle = RealSession;   /* nonce/hmac left empty — no password on this index */
+  AuthSession.sessionHandle = Session;   /* nonce/hmac left empty — no password on this index */
 
   ZeroMem (&InData, sizeof (InData));
   InData.size = (UINT16)SecretLen;
@@ -272,14 +669,12 @@ WriteSecretToNvIndex (
   if (EFI_ERROR (Status)) {
     Print (L"[PROVISION] Tpm2NvWrite failed: %r\n", Status);
   } else {
-    Print (L"[PROVISION] Secret written to NV index 0x%x, gated on PCR[%u]\n", SECRET_NV_INDEX, PCR_FOR_BIOS);
+    Print (L"[PROVISION] Secret written to NV index 0x%x, gated on PolicyAuthorize\n", SECRET_NV_INDEX);
   }
 
-  Tpm2FlushContext (RealSession);
+  Tpm2FlushContext (Session);
   return Status;
 }
-
-
 
 /* ── EFI entry point ───────────────────────────────────────────────────── */
 EFI_STATUS
@@ -289,10 +684,12 @@ UefiMain (
   IN EFI_SYSTEM_TABLE *SystemTable
   )
 {
-  EFI_STATUS          Status;
-  VOID               *RomBuffer = NULL;
-  UINTN               RomSize   = 0;
-  TPM2B_DIGEST  PolicyDigest;
+  EFI_STATUS             Status;
+  VOID                   *RomBuffer = NULL;
+  UINTN                   RomSize   = 0;
+  TPM2B_DIGEST            AuthPolicy;
+  TPMI_SH_AUTH_SESSION    AuthorizedSession;
+  UINT8                   Secret[SECRET_LEN];
 
   Print (L"\n=== TpmProvisionApp (Setup First Boot) ===\n\n");
   DEBUG ((DEBUG_INFO, "TpmProvisionApp start...\n"));
@@ -341,29 +738,51 @@ UefiMain (
   }
   Print (L"\n");
 
-  /* Steps 4-6: compute PCR[16] policy, define NV index, write secret into it */
-  Print (L"[PROVISION] Sealing secret \"" SECRET_STRING L"\" to PCR[%u] via NV index 0x%x...\n",
-         PCR_FOR_BIOS, SECRET_NV_INDEX);
-
-
-
   Status = Tpm2RequestUseTpm ();
   if (EFI_ERROR (Status)) {
     Print (L"[PROVISION] Tpm2RequestUseTpm failed: %r\n", Status);
+    FreePool (RomBuffer);
     return Status;
   }
 
-  Status = ComputePcr16PolicyDigest (&PolicyDigest);
+  /* Step 4: real owner auth (issue #15 — was NULL) */
+  Status = SetOwnerAuth ();
   if (EFI_ERROR (Status)) {
+    FreePool (RomBuffer);
     return Status;
   }
 
-  Status = DefineSecretNvIndex (&PolicyDigest);
+  /* Step 5: PolicyAuthorize trial digest, keyed to the compiled-in signing key */
+  Print (L"[PROVISION] Computing PolicyAuthorize digest...\n");
+  Status = ComputePolicyAuthorizeDigest (&AuthPolicy);
   if (EFI_ERROR (Status)) {
+    FreePool (RomBuffer);
     return Status;
   }
 
-  Status = WriteSecretToNvIndex ((UINT8 *)SECRET_STRING, SECRET_LEN); //TODO make this not hardcoded
+  /* Step 6: define the NV index, gated on that digest — fixed forever after this */
+  Status = DefineSecretNvIndex (&AuthPolicy);
+  if (EFI_ERROR (Status)) {
+    FreePool (RomBuffer);
+    return Status;
+  }
+
+  /* Step 7: prove this boot's ROM against its ticket, then write a random secret */
+  Print (L"[PROVISION] Verifying this boot's ROM against its ticket...\n");
+  Status = RunAuthorizedPolicySession (&AuthorizedSession);
+  if (EFI_ERROR (Status)) {
+    FreePool (RomBuffer);
+    return Status;
+  }
+
+  Status = GenerateRandomSecret (Secret, SECRET_LEN);
+  if (EFI_ERROR (Status)) {
+    Tpm2FlushContext (AuthorizedSession);
+    FreePool (RomBuffer);
+    return Status;
+  }
+
+  Status = WriteSecretToNvIndex (AuthorizedSession, Secret, SECRET_LEN);
   FreePool (RomBuffer);
   if (EFI_ERROR (Status)) {
     return Status;

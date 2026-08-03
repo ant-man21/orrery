@@ -27,6 +27,7 @@
   Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf
   Tpm2PcrLib|OrreryPkg/Library/Tpm2PcrLib/Tpm2PcrLib.inf
   PlatformRomInfoLib|OrreryPkg/Library/PlatformRomInfoLibQ35/PlatformRomInfoLibQ35.inf
+  Tpm2PolicyAuthorizeLib|OrreryPkg/Library/Tpm2PolicyAuthorizeLib/Tpm2PolicyAuthorizeLib.inf
 
 ## -----------------------------------------------------------------------------
 ## Shared drivers (OrreryPkg) + any q35-only drivers (Q35Pkg/Drivers, none yet)

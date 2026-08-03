@@ -145,6 +145,38 @@ if [[ "$SYNC" -eq 1 ]]; then
         done
     fi
 
+    # ---------- sign this build's ROM -> shared/data/rom.ticket --------------
+    # QEMU_EFI.fd is NOT what PlatformRomInfoLibArmVirt measures in full —
+    # ArmVirtQemu.fdf places a 0x1000-byte SEC/reset-vector region *before*
+    # FVMAIN_COMPACT (see ArmVirtPkg/ArmVirtQemu.fdf: "0x00000000|0x00001000"
+    # then "0x00001000|$(FVMAIN_COMPACT_SIZE) ... FV = FVMAIN_COMPACT"), and
+    # PlatformRomInfoLibArmVirt.c only reports PcdFvBaseAddress/PcdFvSize —
+    # i.e. just the FVMAIN_COMPACT slice, offset 0x1000 onward. Signing the
+    # whole file hashes 4096 bytes the device never measures, so the ticket
+    # would never match regardless of tampering. --offset/--length make
+    # sign_rom_ticket.py hash the exact same slice; length is computed from
+    # the real built file rather than hardcoding FVMAIN_COMPACT_SIZE, so
+    # this self-corrects if that ever changes.
+    DATA_DIR="$SCRIPT_DIR/shared/data"
+    mkdir -p "$DATA_DIR"
+
+    SIGNING_KEY="$SCRIPT_DIR/../tools/keys/update_signing_key.pem"
+    ROM_FD="$BUILD_OUT/../FV/QEMU_EFI.fd"
+    ROM_OFFSET=0x1000
+    if [[ ! -f "$SIGNING_KEY" ]]; then
+        echo ""
+        echo "  (no signing key yet — run tools/generate_signing_key.py once, then rebuild"
+        echo "   to get a real fs1:\\data\\rom.ticket. Skipping ticket generation for now.)"
+    elif [[ ! -f "$ROM_FD" ]]; then
+        echo "  ✗ $ROM_FD not found — can't sign a ticket for it"
+    else
+        echo ""
+        echo "→ Signing this build's ROM..."
+        ROM_LENGTH=$(( $(stat -c%s "$ROM_FD") - ROM_OFFSET ))
+        python3 "$SCRIPT_DIR/../tools/sign_rom_ticket.py" "$ROM_FD" --out "$DATA_DIR/rom.ticket" \
+            --offset "$ROM_OFFSET" --length "$ROM_LENGTH"
+    fi
+
     # ---------- push into shared.img in place --------------------------------
     SHARED_IMG="$SCRIPT_DIR/shared.img"
     SHARED_SIZE_MB=256

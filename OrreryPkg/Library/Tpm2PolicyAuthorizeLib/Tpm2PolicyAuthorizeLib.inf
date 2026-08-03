@@ -1,0 +1,30 @@
+## @file
+#  Provides Tpm2LoadExternal, Tpm2VerifySignature, Tpm2PolicyAuthorize —
+#  the three TPM2 commands SecurityPkg's Tpm2CommandLib doesn't wrap,
+#  same gap as Tpm2PolicyPcrLib. See Include/Library/Tpm2PolicyAuthorizeLib.h.
+#
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = Tpm2PolicyAuthorizeLib
+  FILE_GUID                      = 454d6502-bb80-47a5-931e-75e153c51c14
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = Tpm2PolicyAuthorizeLib
+
+[Sources]
+  Tpm2PolicyAuthorizeLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SecurityPkg/SecurityPkg.dec
+  OrreryPkg/OrreryPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  Tpm2DeviceLib
