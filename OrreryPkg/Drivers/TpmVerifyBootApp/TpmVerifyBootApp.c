@@ -2,16 +2,16 @@
  * TpmVerifyBootApp.c
  *
  * "Reboot / No Update" verification flow (companion to TpmProvisionApp):
- *   1. Measure ROM -> extend PCR[16]                     [TODO]
+ *   1. Measure ROM -> extend PCR[15]                     [TODO]
  *   2. Load sealed blob from disk (fs1:\data\)            [TODO]
- *   3. Unseal (TPM checks PCR[16] + integrity)            [TODO]
+ *   3. Unseal (TPM checks PCR[15] + integrity)            [TODO]
  *   4. If success -> boot continues                       [TODO]
  *   5. If fail -> halt (BIOS modified!)                    [TODO]
  *
  * This app always measures the live ROM — there is no golden/reference
  * image to fall back to, on real hardware or here. To exercise the
  * tamper-detection path, flash a *different* ROM and re-run: step 1's
- * measurement produces a different PCR[16], so step 3's unseal is
+ * measurement produces a different PCR[15], so step 3's unseal is
  * expected to fail. To confirm the mechanism still succeeds, flash the
  * original ROM back and re-run.
  *
@@ -31,6 +31,7 @@
 #include <Library/BaseCryptLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PcdLib.h>
 #include <Library/PlatformRomInfoLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
@@ -43,7 +44,10 @@
 #include <IndustryStandard/TpmPtp.h>
 
 /* ── constants ─────────────────────────────────────────────────────────── */
-#define PCR_FOR_BIOS  16
+/* PCR index lives in gOrreryPkgTokenSpaceGuid.PcdPcrForBios (OrreryPkg.dec)
+ * — non-resettable (platform-reset only); outside the PC Client PFP's
+ * PCR0-7 SRTM range to avoid firmware-phase collisions — see issue #27.
+ */
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 
@@ -122,7 +126,7 @@ VerifyBoot (
   TPM2B_DIGEST          EmptyPcrDigest;
   TPMS_AUTH_COMMAND     AuthSession;
 
-  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
+  BuildPcrSelection (PcdGet32 (PcdPcrForBios), &Pcrs);
   ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));
   ZeroMem (&AuthSession, sizeof (AuthSession));
   ZeroMem (OutData, sizeof (*OutData));
@@ -182,7 +186,7 @@ UefiMain (
   {
     TPML_DIGEST  Digests;
 
-    Status = ExtendPcr (Tcg2, PCR_FOR_BIOS, RomBuffer, RomSize, "BIOS ROM", &Digests);
+    Status = ExtendPcr (Tcg2, PcdGet32 (PcdPcrForBios), RomBuffer, RomSize, "BIOS ROM", &Digests);
     FreePool (RomBuffer);
     if (EFI_ERROR (Status)) {
       Print (L"[VERIFY] ExtendPcr failed: %r\n", Status);
@@ -192,7 +196,7 @@ UefiMain (
     if (Digests.count > 0) {
       UINT32  i;
 
-      Print (L"[VERIFY] PCR[%u] = ", PCR_FOR_BIOS);
+      Print (L"[VERIFY] PCR[%u] = ", PcdGet32 (PcdPcrForBios));
       for (i = 0; i < Digests.digests[0].size; i++) {
         Print (L"%02x", Digests.digests[0].buffer[i]);
       }
@@ -209,7 +213,7 @@ UefiMain (
   }
 
   Print (L"[VERIFY] Unseal succeeded — PCR[%u] matches sealed state, continuing boot.\n",
-         PCR_FOR_BIOS);
+         PcdGet32 (PcdPcrForBios));
 
   Print (L"[VERIFY] Secret: ");
   for (UINTN i = 0; i < OutData.size; i++) {

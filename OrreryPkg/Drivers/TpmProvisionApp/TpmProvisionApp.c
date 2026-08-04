@@ -5,7 +5,7 @@
  * signed-ticket reprovisioning, replacing the old PCR16-only design):
  *   1. Flash good ROM (signed)                              [external — not this app]
  *   2. Boot                                                 [done — this is entry]
- *   3. Measure ROM -> extend PCR[16]                        [done]
+ *   3. Measure ROM -> extend PCR[15]                        [done]
  *   4. Set a real TPM_RH_OWNER auth (was NULL — issue #15)  [done]
  *   5. Compute the PolicyAuthorize digest (trial session)   [done]
  *   6. Define an NV index gated on that digest              [done]
@@ -15,7 +15,7 @@
  * The vault's rule (step 6's authPolicy) is keyed to a compiled-in
  * signing key's Name (TrustedUpdateKey.h) — not to any PCR value — so it
  * never has to change again. Every future firmware update just ships a
- * new signed ticket for its own PCR16 value; this app and
+ * new signed ticket for its own PCR15 value; this app and
  * TpmVerifyBootApp both run the same "prove this boot's ROM, then use
  * the resulting session" chain (RunAuthorizedPolicySession below) to
  * satisfy that fixed rule. See issue #15 for the full design writeup and
@@ -45,6 +45,7 @@
 #include <Library/RngLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PcdLib.h>
 #include <Library/PlatformRomInfoLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
@@ -64,7 +65,10 @@
 
 /* ── constants ─────────────────────────────────────────────────────────── */
 
-#define PCR_FOR_BIOS      16                   // user-controlled, safe to extend
+/* PCR index lives in gOrreryPkgTokenSpaceGuid.PcdPcrForBios (OrreryPkg.dec)
+ * — non-resettable (platform-reset only); outside the PC Client PFP's
+ * PCR0-7 SRTM range to avoid firmware-phase collisions — see issue #27.
+ */
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 
@@ -442,6 +446,14 @@ ComputePolicyAuthorizeDigest (
  * POLICYWRITE|POLICYREAD (not AUTHWRITE/AUTHREAD) means the policy is the
  * only door — there is no password fallback into this index. Owner auth
  * (issue #15) gates who can undefine/redefine the index itself.
+ *
+ * WRITEDEFINE (issue #9) makes the write side one-shot: TPM2_NV_WriteLock
+ * refuses to lock an index that has neither WRITEDEFINE nor
+ * WRITE_STCLEAR set, so this attribute is what makes LockSecretNvIndex()
+ * below actually do anything. Once locked, anything that satisfies the
+ * PCR15+ticket policy can still *read* the secret, but nothing can
+ * overwrite it short of TPM_RH_OWNER redefining the index outright — that
+ * redefine path is the future OTA reseal flow (#6), not built yet.
  */
 STATIC EFI_STATUS
 DefineSecretNvIndex (
@@ -458,6 +470,7 @@ DefineSecretNvIndex (
   NvPublic.nvPublic.nameAlg   = TPM_ALG_SHA256;
   NvPublic.nvPublic.attributes.TPMA_NV_POLICYWRITE = 1;
   NvPublic.nvPublic.attributes.TPMA_NV_POLICYREAD  = 1;
+  NvPublic.nvPublic.attributes.TPMA_NV_WRITEDEFINE = 1;
   NvPublic.nvPublic.authPolicy.size = PolicyDigest->size;
   CopyMem (NvPublic.nvPublic.authPolicy.buffer, PolicyDigest->buffer, PolicyDigest->size);
   NvPublic.nvPublic.dataSize  = SECRET_LEN;
@@ -496,7 +509,7 @@ DefineSecretNvIndex (
  * session authorized to touch the NV index ───────────────────────────────
  * Shared by provisioning's write and (once written) TpmVerifyBootApp's
  * read — same chain either way:
- *   PolicyPCR (TPM reads its own live PCR16)
+ *   PolicyPCR (TPM reads its own live PCR15)
  *   -> GetDigest
  *   -> LoadExternal the compiled-in key
  *   -> read + unmarshal this boot's ticket
@@ -532,7 +545,7 @@ RunAuthorizedPolicySession (
     return Status;
   }
 
-  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
+  BuildPcrSelection (PcdGet32 (PcdPcrForBios), &Pcrs);
   ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));
 
   Status = Tpm2PolicyPCR (RealSession, &EmptyPcrDigest, &Pcrs);
@@ -646,6 +659,35 @@ GenerateRandomSecret (
   return EFI_SUCCESS;
 }
 
+/* ── helper: lock the secret's NV index against further writes (issue #9)
+ * ─────────────────────────────────────────────────────────────────────
+ * TPM_RH_OWNER authorizes the lock directly — this is deliberately
+ * independent of the index's own PolicyAuthorize gate, so locking doesn't
+ * require re-proving this boot's ROM. Once TPM2_NV_WriteLock sets
+ * TPMA_NV_WRITELOCKED, it stays set until the index is undefined and
+ * redefined (owner-authorized, same as DefineSecretNvIndex above) — there
+ * is no "unlock" command.
+ */
+STATIC EFI_STATUS
+LockSecretNvIndex (
+  VOID
+  )
+{
+  EFI_STATUS         Status;
+  TPMS_AUTH_COMMAND   OwnerAuthSession;
+
+  BuildOwnerAuthSession (&OwnerAuthSession);
+
+  Status = Tpm2NvWriteLock (TPM_RH_OWNER, SECRET_NV_INDEX, &OwnerAuthSession);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] Tpm2NvWriteLock failed: %r\n", Status);
+  } else {
+    Print (L"[PROVISION] NV index 0x%x write-locked — no further writes until redefined\n", SECRET_NV_INDEX);
+  }
+
+  return Status;
+}
+
 /* ── helper: write the secret using an already-authorized session ──────── */
 STATIC EFI_STATUS
 WriteSecretToNvIndex (
@@ -673,6 +715,11 @@ WriteSecretToNvIndex (
   }
 
   Tpm2FlushContext (Session);
+
+  if (!EFI_ERROR (Status)) {
+    Status = LockSecretNvIndex ();
+  }
+
   return Status;
 }
 
@@ -706,7 +753,7 @@ UefiMain (
 
   /* Step 2 (boot) is implicit — we're running.                            */
 
-  /* Step 3: Measure ROM -> extend PCR[16] */
+  /* Step 3: Measure ROM -> extend PCR[15] */
   Print (L"[PROVISION] Reading ROM image...\n");
   Status = ReadRomImage (&RomBuffer, &RomSize);
   if (EFI_ERROR (Status)) {
@@ -714,11 +761,11 @@ UefiMain (
     return Status;
   }
 
-  Print (L"[PROVISION] Extending PCR[%u]...\n", PCR_FOR_BIOS);
+  Print (L"[PROVISION] Extending PCR[%u]...\n", PcdGet32 (PcdPcrForBios));
   {
     TPML_DIGEST  Digests;
 
-    Status = ExtendPcr (Tcg2, PCR_FOR_BIOS, RomBuffer, RomSize, "BIOS ROM", &Digests);
+    Status = ExtendPcr (Tcg2, PcdGet32 (PcdPcrForBios), RomBuffer, RomSize, "BIOS ROM", &Digests);
     if (EFI_ERROR (Status)) {
       Print (L"[PROVISION] ExtendPcr failed: %r\n", Status);
       FreePool (RomBuffer);
@@ -728,7 +775,7 @@ UefiMain (
     if (Digests.count > 0) {
       UINT32  i;
 
-      Print (L"[PROVISION] PCR[%u] = ", PCR_FOR_BIOS);
+      Print (L"[PROVISION] PCR[%u] = ", PcdGet32 (PcdPcrForBios));
       for (i = 0; i < Digests.digests[0].size; i++) {
         Print (L"%02x", Digests.digests[0].buffer[i]);
       }

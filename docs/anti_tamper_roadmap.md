@@ -5,6 +5,13 @@ TPM 2.0 to bind a secret to the state of the running firmware (PCR[16]), so
 that a modified BIOS can no longer unlock it. Long-term goal is to extend this
 into a signed OTA firmware update flow.
 
+> **Update (issue #27):** the project has since migrated off PCR16 (TCG's
+> resettable "debug" PCR) to **PCR15** (non-resettable, outside the PC
+> Client PFP's PCR0-7 SRTM range). Everywhere below that says PCR[16] is a
+> historical record of that phase of the work — the code and
+> `tools/sign_rom_ticket.py` now use PCR15. Don't "fix" the PCR16 mentions
+> below; they're accurate for when that work happened.
+
 This doc is written to be dropped into a fresh session as the starting prompt.
 It captures current status, near-term work, and the longer arc, so a new
 conversation doesn't need this project's full history to be productive.

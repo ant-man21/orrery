@@ -17,6 +17,20 @@
 [Includes]
   Include
 
+[Guids]
+  ## Token space GUID for PCDs owned by this package.
+  gOrreryPkgTokenSpaceGuid = { 0x9d25c291, 0x4964, 0x40b8, { 0xbe, 0x02, 0xdc, 0x5a, 0x17, 0x45, 0x7a, 0x2c }}
+
+[PcdsFixedAtBuild]
+  ## PCR index the ROM measurement is extended into (TpmProvisionApp /
+  ## TpmVerifyBootApp) and that tools/sign_rom_ticket.py's offline hash
+  ## chain must match. PCR15: non-resettable (platform-reset only, unlike
+  ## PCR16), outside the PC Client PFP's PCR0-7 SRTM range owned by
+  ## platform firmware phases — see issue #27. Fixed-at-build since
+  ## changing it requires re-provisioning anyway: the sealed secret's
+  ## policy digest is baked to this specific PCR value.
+  gOrreryPkgTokenSpaceGuid.PcdPcrForBios|15|UINT32|0x00000001
+
 [LibraryClasses]
   ## TPM2_PolicyPCR command wrapper — not provided by SecurityPkg's
   ## Tpm2CommandLib (EDK2 firmware never needed PCR-gated policy sessions,

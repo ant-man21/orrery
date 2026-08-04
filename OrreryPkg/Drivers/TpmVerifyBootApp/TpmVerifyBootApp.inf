@@ -1,9 +1,9 @@
 ## TpmVerifyBootApp.inf
 ##
 ## UEFI Application – "Reboot / No Update" verification flow:
-##   1. Measure live ROM -> extend PCR[16]
-##   2. Open a policy session against PCR[16]
-##   3. Read the secret from the sealed NV index (fails if PCR[16] differs)
+##   1. Measure live ROM -> extend PCR[15]
+##   2. Open a policy session against PCR[15]
+##   3. Read the secret from the sealed NV index (fails if PCR[15] differs)
 ##   4. If success -> boot continues
 ##   5. If fail -> halt (BIOS modified!)
 ##
@@ -51,9 +51,13 @@
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   PlatformRomInfoLib              ## where's my own flash ROM (OrreryPkg-local, platform-specific instance — see docs/rom_discovery_story.md)
   DebugLib
+  PcdLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
+
+[FixedPcd]
+  gOrreryPkgTokenSpaceGuid.PcdPcrForBios ## CONSUMES
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up
