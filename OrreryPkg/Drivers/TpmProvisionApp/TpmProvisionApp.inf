@@ -54,6 +54,7 @@
   PlatformRomInfoLib              ## where's my own flash ROM (OrreryPkg-local, platform-specific instance — see docs/rom_discovery_story.md)
   RngLib                          ## GetRandomNumber128 (random secret — issue #15)
   DebugLib
+  PcdLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
@@ -63,6 +64,9 @@
   gEfiTpmDeviceInstanceTpm20DtpmGuid     ## for TPM device selection
   gEfiFileInfoGuid                       ## EFI_FILE_INFO (ticket file size)
   gEfiFileSystemInfoGuid                 ## EFI_FILE_SYSTEM_INFO (locate volume by FAT label)
+
+[FixedPcd]
+  gOrreryPkgTokenSpaceGuid.PcdPcrForBios ## CONSUMES
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

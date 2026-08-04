@@ -55,6 +55,9 @@ PRIVATE_KEY = REPO_ROOT / "tools" / "keys" / "update_signing_key.pem"
 
 TPM_CC_POLICY_PCR = 0x0000017F
 TPM_ALG_SHA256    = 0x000B
+# Must match gOrreryPkgTokenSpaceGuid.PcdPcrForBios in OrreryPkg/OrreryPkg.dec
+# — this offline script can't read a build-time PCD, so keep the two in sync
+# by hand.
 PCR_FOR_BIOS      = 15
 
 # TPML_PCR_SELECTION wire bytes for {count=1, hash=SHA256, sizeofSelect=3,

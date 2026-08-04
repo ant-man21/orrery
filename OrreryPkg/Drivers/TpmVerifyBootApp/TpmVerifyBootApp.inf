@@ -51,9 +51,13 @@
   BaseCryptLib                    ## Sha256HashAll (used in later phases)
   PlatformRomInfoLib              ## where's my own flash ROM (OrreryPkg-local, platform-specific instance — see docs/rom_discovery_story.md)
   DebugLib
+  PcdLib
 
 [Protocols]
   gEfiTcg2ProtocolGuid                   ## CONSUMES
+
+[FixedPcd]
+  gOrreryPkgTokenSpaceGuid.PcdPcrForBios ## CONSUMES
 
 [BuildOptions]
   ## Suppress "C99 declaration after statement" warnings that trip up

@@ -45,6 +45,7 @@
 #include <Library/RngLib.h>
 #include <Library/PrintLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PcdLib.h>
 #include <Library/PlatformRomInfoLib.h>
 
 #include <Protocol/Tcg2Protocol.h>
@@ -64,10 +65,10 @@
 
 /* ── constants ─────────────────────────────────────────────────────────── */
 
-#define PCR_FOR_BIOS      15                   // non-resettable (platform-reset only);
-                                                // outside the PC Client PFP's PCR0-7
-                                                // SRTM range to avoid firmware-phase
-                                                // collisions — see issue #27
+/* PCR index lives in gOrreryPkgTokenSpaceGuid.PcdPcrForBios (OrreryPkg.dec)
+ * — non-resettable (platform-reset only); outside the PC Client PFP's
+ * PCR0-7 SRTM range to avoid firmware-phase collisions — see issue #27.
+ */
 #define SECRET_LEN        5
 #define SECRET_NV_INDEX   ((TPM_HANDLE)0x01500001)   /* owner-defined NV index range: 0x01000000-0x01FFFFFF */
 
@@ -544,7 +545,7 @@ RunAuthorizedPolicySession (
     return Status;
   }
 
-  BuildPcrSelection (PCR_FOR_BIOS, &Pcrs);
+  BuildPcrSelection (PcdGet32 (PcdPcrForBios), &Pcrs);
   ZeroMem (&EmptyPcrDigest, sizeof (EmptyPcrDigest));
 
   Status = Tpm2PolicyPCR (RealSession, &EmptyPcrDigest, &Pcrs);
@@ -760,11 +761,11 @@ UefiMain (
     return Status;
   }
 
-  Print (L"[PROVISION] Extending PCR[%u]...\n", PCR_FOR_BIOS);
+  Print (L"[PROVISION] Extending PCR[%u]...\n", PcdGet32 (PcdPcrForBios));
   {
     TPML_DIGEST  Digests;
 
-    Status = ExtendPcr (Tcg2, PCR_FOR_BIOS, RomBuffer, RomSize, "BIOS ROM", &Digests);
+    Status = ExtendPcr (Tcg2, PcdGet32 (PcdPcrForBios), RomBuffer, RomSize, "BIOS ROM", &Digests);
     if (EFI_ERROR (Status)) {
       Print (L"[PROVISION] ExtendPcr failed: %r\n", Status);
       FreePool (RomBuffer);
@@ -774,7 +775,7 @@ UefiMain (
     if (Digests.count > 0) {
       UINT32  i;
 
-      Print (L"[PROVISION] PCR[%u] = ", PCR_FOR_BIOS);
+      Print (L"[PROVISION] PCR[%u] = ", PcdGet32 (PcdPcrForBios));
       for (i = 0; i < Digests.digests[0].size; i++) {
         Print (L"%02x", Digests.digests[0].buffer[i]);
       }
