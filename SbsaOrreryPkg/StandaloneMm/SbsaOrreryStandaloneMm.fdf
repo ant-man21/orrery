@@ -1,0 +1,111 @@
+#
+#  SbsaOrreryStandaloneMm.fdf — BL32 flash layout for QEMU sbsa-ref
+#
+#  Copyright (c) 2026, Orrery Project.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+
+################################################################################
+#
+# FD Section
+#
+################################################################################
+
+[FD.BL32_AP_MM]
+# PLAT_QEMU_SP_IMAGE_BASE == BL32_BASE == BL_RAM_BASE in
+# trusted-firmware-a/plat/qemu/qemu_sbsa/include/platform_def.h:
+#   SEC_SRAM_BASE (0x20000000) + SHARED_RAM_SIZE (0x8000) = 0x20008000
+BaseAddress   = 0x20008000|gArmTokenSpaceGuid.PcdFdBaseAddress
+
+# PLAT_QEMU_SP_IMAGE_SIZE from the same header.
+Size          = 0x00300000|gArmTokenSpaceGuid.PcdFdSize
+
+ErasePolarity = 0
+BlockSize     = 0x00001000
+NumBlocks     = 0x300
+
+#
+# Limit the size of the binary to 1MB; can grow up to PcdFdSize if needed.
+#
+0x00000000|0x00100000
+gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
+FV = FVMAIN_COMPACT
+
+################################################################################
+#
+# FV Section
+#
+################################################################################
+
+[FV.FvMain]
+BlockSize          = 0x40
+NumBlocks          = 0         # This FV gets compressed so make it just big enough
+FvAlignment        = 16
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+FvNameGuid         = 6a34e4f6-9d3e-4f8e-9c1a-2b5f7e0c9d41
+
+  INF ArmPkg/Drivers/StandaloneMmCpu/StandaloneMmCpu.inf
+
+  INF Platform/ARM/Drivers/NorFlashDxe/NorFlashStandaloneMm.inf
+  INF MdeModulePkg/Universal/FaultTolerantWriteDxe/FaultTolerantWriteStandaloneMm.inf
+  INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableStandaloneMm.inf
+
+[FV.FVMAIN_COMPACT]
+FvAlignment        = 16
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+
+  INF StandaloneMmPkg/Core/StandaloneMmCore.inf
+
+  FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+    SECTION GUIDED EE4E5898-3914-4259-9D6E-DC7BD79403CF PROCESSING_REQUIRED = TRUE {
+      SECTION FV_IMAGE = FVMAIN
+    }
+  }
+
+################################################################################
+#
+# Rules
+#
+################################################################################
+
+[Rule.Common.MM_CORE_STANDALONE]
+  FILE SEC = $(NAMED_GUID) RELOCS_STRIPPED FIXED {
+    PE32  PE32 Align = Auto             $(INF_OUTPUT)/$(MODULE_NAME).efi
+  }
+
+[Rule.Common.MM_STANDALONE]
+  FILE MM_STANDALONE = $(NAMED_GUID) {
+    SMM_DEPEX SMM_DEPEX Optional       $(INF_OUTPUT)/$(MODULE_NAME).depex
+    PE32      PE32                     $(INF_OUTPUT)/$(MODULE_NAME).efi
+    UI        STRING="$(MODULE_NAME)" Optional
+    VERSION   STRING="$(INF_VERSION)" Optional BUILD_NUM=$(BUILD_NUMBER)
+  }

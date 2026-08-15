@@ -2,3 +2,12 @@
 	path = edk2
 	url = https://github.com/ant-man21/edk2.git
 	branch = orrery-changes
+[submodule "edk2-platforms"]
+	path = edk2-platforms
+	url = https://github.com/tianocore/edk2-platforms.git
+[submodule "edk2-non-osi"]
+	path = edk2-non-osi
+	url = https://github.com/tianocore/edk2-non-osi.git
+[submodule "trusted-firmware-a"]
+	path = trusted-firmware-a
+	url = https://github.com/TrustedFirmware-A/trusted-firmware-a.git

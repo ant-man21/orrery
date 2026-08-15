@@ -1,0 +1,40 @@
+#/* @file
+#
+#  HardwareInfoLib for QEMU sbsa-ref — fork of edk2-platforms'
+#  SbsaQemuHardwareInfoLib with one behavior change. See the .c file header
+#  for why this fork exists instead of patching the vendored submodule.
+#
+#  Copyright (c) 2026, Orrery Project.
+#  Copyright (c) 2021, NUVIA Inc. All rights reserved.
+#  Copyright (c) 2024, Linaro Ltd. All rights reserved.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+#*/
+
+[Defines]
+  INF_VERSION                    = 0x0001001c
+  BASE_NAME                      = SbsaQemuHardwareInfoLibCompat
+  FILE_GUID                      = 9c1e2b7a-4f6d-4e8b-9a0c-2d3e4f5a6b71
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = HardwareInfoLib
+
+[Sources]
+  SbsaQemuHardwareInfoLibCompat.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  Silicon/Qemu/SbsaQemu/SbsaQemu.dec
+
+[LibraryClasses]
+  ArmMonitorLib
+  ResetSystemLib
+  DebugLib
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdGicDistributorBase
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase
+  gArmVirtSbsaQemuPlatformTokenSpaceGuid.PcdGicItsBase
