@@ -98,7 +98,9 @@ if [[ ! -f "$FLASH0" || ! -f "$FLASH1" ]]; then
     echo "    $FLASH0"
     echo "    $FLASH1"
     echo ""
-    echo "  You need to build first: ./build.sh -${BUILD_TYPE:0:1,,}"
+    BUILD_FLAG="r"
+    [[ "$BUILD_TYPE" == "DEBUG" ]] && BUILD_FLAG="d"
+    echo "  You need to build first: ./build.sh -${BUILD_FLAG}"
     exit 1
 fi
 

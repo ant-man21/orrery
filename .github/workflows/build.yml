@@ -19,6 +19,9 @@ jobs:
           - name: arm-virt
             script: ArmVirtOrreryPkg/build.sh
             args: -r
+          - name: sbsa
+            script: SbsaOrreryPkg/build.sh
+            args: -r -S
     steps:
       - name: Checkout orrery
         uses: actions/checkout@v4
