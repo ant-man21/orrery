@@ -25,11 +25,11 @@ include <BOSL2/gears.scad>
 // ---------- Shared gear sizing (keep constant across all meshing pairs) ----------
 circ_pitch      = 3.3;   // tooth size -- shrunk further to buy back room for the sun post
 pressure_angle  = 20;
-backlash        = 0.3;   // mm at pitch circle -- printer clearance, raise to 0.4-0.5 if gears bind
+backlash        = 0.25;   // mm at pitch circle -- bumped up from 0.3, which had zero real margin for FDM
 clearance       = undef; // let BOSL2 use its default (module/4)
 
 pinion_thickness = 5;    // mm
-ring_thickness    = 4;   // mm, thin as requested -- keep >= 3mm for FDM strength at this scale
+ring_thickness    = 7;   // mm, thin as requested -- keep >= 3mm for FDM strength at this scale
 ring_backing       = 3;    // mm of solid rim material outside the ring gear teeth (trimmed down to save space)
 
 // ---------- Motor shaft: stubby double-flat ("double-D") stub ----------
@@ -39,9 +39,9 @@ ring_backing       = 3;    // mm of solid rim material outside the ring gear tee
 //                (not the diameter -- the flats cut it down)
 // shaft_len    = how far the stub sticks out (engagement depth for the pinion bore)
 shaft_dia  = 5.0;
-flat_span  = 4.4;
+flat_span  = 3.5;
 shaft_len  = 8;
-bore_clearance = 0.25;   // mm added to bore so it slips on, not press-fits
+bore_clearance = 0.45;   // mm added to bore so it slips on -- bumped up from 0.25
 
 // ---------- Station layout ----------
 // One entry per stepper: [ring_teeth, pinion_teeth, motor_angle_deg]
@@ -83,6 +83,7 @@ function motor_center_dist(ring_teeth, pinion_teeth) =
 // ---------- Planet post ----------
 // Sits in the SOLID BACKING RIM of the ring gear (outside the teeth), not
 // on the teeth themselves. EDIT these three to change the peg size/position.
+ADD_PLANET_POST    = false; // set false to remove the peg entirely (0-height was causing a compile issue)
 planet_post_dia    = 4;   // diameter of the peg the planet mounts onto
 planet_post_height = 8;   // how far it sticks up above the ring gear's top face
 planet_post_angle  = 0;   // where around the ring it sits -- doesn't matter mechanically
@@ -96,7 +97,7 @@ function planet_post_r(teeth) = ring_outer_r(teeth) - ring_backing / 2; // middl
 // or press a metal pin/screw into it) -- NOT on a motor shaft.
 ADD_SUPPORT_GEAR       = true;
 support_post_dia        = 5;    // diameter of the fixed peg the idler spins on
-support_bore_clearance  = 0.35; // extra clearance so it spins freely (looser than the motor bore)
+support_bore_clearance  = 0.9;  // extra clearance so it spins freely -- loosened further from 0.6
 support_post_height     = pinion_thickness + 2; // base post height -- must support full idler thickness
 
 // ---------- Sanity check: does each outer station's pinion clear the next ring inward? ----------
@@ -188,6 +189,38 @@ module idler_gear(ring_teeth, pinion_teeth) {
     }
 }
 
+// The base is already printed -- its outer wall position was computed from
+// ring_backing directly, with almost no margin (only 0.4mm total). We can't
+// change the base now, so instead we shrink the PRINTED ring gear's body by
+// this extra amount, so it comes out smaller than what the fixed wall
+// assumed and actually has real clearance to sit inside it.
+RING_FIT_CLEARANCE = 1.0; // mm shaved off the ring's outer backing, print-side only -- loosened further from 0.5
+
+// ---------- Weld flange ----------
+// A wider flat platform sitting ABOVE the (already-printed, fixed) wall's
+// top edge -- the thin planet posts alone are too weak to carry real
+// weight. This gives real surface area to weld a proper support arm to,
+// starting right where the fixed wall ends so it never collides with it.
+// The planet post still pokes up through it as a small locator pin.
+ADD_WELD_FLANGE    = true;
+FLANGE_THICKNESS    = 3;  // mm, thickness of the flat platform itself
+FLANGE_EXTRA_WIDTH  = 6; // mm, how far it extends beyond the wall's outer face
+
+module weld_flange(ring_teeth) {
+    inner_r        = ring_pr(ring_teeth) - module_value(circ_pitch) * 1.5;
+    wall_outer_r   = ring_outer_r(ring_teeth) + 0.4 + 2;
+    flange_outer_r = wall_outer_r + FLANGE_EXTRA_WIDTH;
+    riser_outer_r  = ring_outer_r(ring_teeth) - RING_FIT_CLEARANCE;
+    flange_z       = max(channel_wall_h, ring_thickness); // never start below the ring's own top
+    union() {
+        if (flange_z > ring_thickness)
+            translate([0, 0, ring_thickness])
+                tube(or = riser_outer_r, ir = inner_r, h = flange_z - ring_thickness, $fn = 150);
+        translate([0, 0, flange_z])
+            tube(or = flange_outer_r, ir = inner_r, h = FLANGE_THICKNESS, $fn = 150);
+    }
+}
+
 module ring_gear_thin(ring_teeth, pinion_teeth) {
     ps_pinion = auto_profile_shift(teeth = pinion_teeth, pressure_angle = pressure_angle);
     union() {
@@ -195,7 +228,7 @@ module ring_gear_thin(ring_teeth, pinion_teeth) {
             circ_pitch     = circ_pitch,
             teeth          = ring_teeth,
             thickness      = ring_thickness,
-            backing        = ring_backing,
+            backing        = ring_backing - RING_FIT_CLEARANCE,
             pressure_angle = pressure_angle,
             profile_shift  = max(ps_pinion, 0), // ring profile shift must be >= mating pinion's
             backlash       = backlash,
@@ -203,9 +236,12 @@ module ring_gear_thin(ring_teeth, pinion_teeth) {
             anchor         = BOTTOM
         );
         // planet post, sitting on top of the solid backing rim
-        rotate([0, 0, planet_post_angle])
-            translate([planet_post_r(ring_teeth), 0, ring_thickness])
-                cylinder(d = planet_post_dia, h = planet_post_height, $fn = 24);
+        if (ADD_PLANET_POST)
+            rotate([0, 0, planet_post_angle])
+                translate([planet_post_r(ring_teeth), 0, ring_thickness])
+                    cylinder(d = planet_post_dia, h = planet_post_height, $fn = 24);
+        if (ADD_WELD_FLANGE)
+            weld_flange(ring_teeth);
     }
 }
 
@@ -234,7 +270,7 @@ module all_stations_preview() {
 // by the support/idler gear, not a wall), support posts for the idlers,
 // and motor shaft + screw holes at each drive pinion position. No lid.
 base_thickness  = 4;
-channel_wall_h  = ring_thickness + 1.5; // taller than the gear so it actually retains it
+channel_wall_h  = ring_thickness - 1; // + 1.5; // taller than the gear so it actually retains it
 // Real 28BYJ-48 mounting geometry (measured, common across manufacturers):
 motor_screw_spacing = 35;   // distance between the two mount hole centers
 motor_screw_dia      = 4.2; // mount hole diameter on the motor's own bracket
