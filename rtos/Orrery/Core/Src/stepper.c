@@ -114,19 +114,20 @@ uint32_t get_micros(void)
     return s_micros;
 }
 
-/* Set each motor up to resume advancing under whichever mode is now
-   active, from wherever it currently sits. Shared by boot init, mode
-   switches, and resuming from a reset. */
+/* Point every motor at where the active mode wants it heading, from
+   wherever it currently sits. Shared by boot init, mode switches, and
+   resuming from a home. */
 static void primeTargetsForCurrentMode(void)
 {
+    uint32_t now = get_micros();
     for (uint32_t m = 0; m < NUM_MOTORS; m++) {
         if (system_mode == MODE_SIM) {
             motors[m].burst_target_step = motors[m].current_step + SIM_HORIZON_STEPS;
-        } else {
+        } else { /* MODE_REALTIME: hold position until a 90-deg nudge moves the target */
             motors[m].burst_target_step     = motors[m].current_step;
             motors[m].fractional_steps_owed = 0.0;
-            motors[m].next_tick_due_us      = 0; /* fire the first tick right away */
         }
+        motors[m].next_due_us = now; /* first step eligible immediately */
     }
 }
 
@@ -156,11 +157,25 @@ void Motor_SetModeSim(void)
     }
 }
 
+/* No Jetson feed yet: each BTN_RT press advances every ring gear by 90 deg
+   and then holds. steps_per_rev already folds in the ring:pinion ratio, so
+   steps_per_rev / 4 half-steps is exactly a quarter turn of the ring gear. */
 void Motor_SetModeRealtime(void)
 {
+    bool entering = (system_mode != MODE_REALTIME);
     system_mode = MODE_REALTIME;
-    if (motor_state == MOTOR_STATE_ORBITING) {
-        primeTargetsForCurrentMode();
+
+    if (motor_state != MOTOR_STATE_ORBITING) {
+        return; /* homing or manual: RT applies once BTN_RESET resumes orbiting */
+    }
+
+    uint32_t now = get_micros();
+    for (uint32_t m = 0; m < NUM_MOTORS; m++) {
+        if (entering) {
+            motors[m].burst_target_step = motors[m].current_step; /* drop SIM's far horizon */
+        }
+        motors[m].burst_target_step += (int32_t)(motors[m].steps_per_rev / 4u);
+        motors[m].next_due_us = now; /* start / resume stepping now */
     }
 }
 
@@ -171,15 +186,28 @@ void Motor_Shift(void)
     HAL_GPIO_WritePin(MOTOR_LATCH_GPIO_Port, MOTOR_LATCH_Pin, GPIO_PIN_RESET);
 }
 
-/* Currently: selects the fixed SIM speed table (mirrors Motor_SetModeSim's
-   role for the calculated table). The original 3-stage position-reset/
-   freewheel behavior is parked - MOTOR_STATE_RETURNING_TO_ZERO/MANUAL are
-   unused while this is BTN_RESET's job. */
+/* Toggle. 1st press: drive every ring gear home to its 0-degree mark, then
+   de-energize the coils so the model can be repositioned by hand. 2nd press
+   (from RETURNING_TO_ZERO or MANUAL): re-lock and resume orbiting under
+   whatever SystemMode is active. */
 void Motor_ButtonReset(void)
 {
-    system_mode = MODE_SIM;
-    sim_use_fixed_values = true; /* BTN_RESET -> fixed table */
     if (motor_state == MOTOR_STATE_ORBITING) {
+        uint32_t now = get_micros();
+        motor_state = MOTOR_STATE_RETURNING_TO_ZERO;
+        for (uint32_t m = 0; m < NUM_MOTORS; m++) {
+            int32_t spr   = (int32_t)motors[m].steps_per_rev;
+            int32_t phase = motors[m].current_step % spr;
+            if (phase < 0) phase += spr;
+            /* nearest 0-degree mark, taking the short way round (<= half a turn) */
+            int32_t home = motors[m].current_step - phase;
+            if (phase * 2 > spr) home += spr;
+            motors[m].burst_target_step     = home;
+            motors[m].fractional_steps_owed = 0.0;
+            motors[m].next_due_us           = now;
+        }
+    } else {
+        motor_state = MOTOR_STATE_ORBITING;
         primeTargetsForCurrentMode();
     }
 }
@@ -197,28 +225,16 @@ void Motor_Poll(void)
     for (uint32_t m = 0; m < NUM_MOTORS; m++) {
         Motor *mot = &motors[m];
 
-        if (motor_state == MOTOR_STATE_ORBITING) {
-            if (system_mode == MODE_SIM) {
-                if (mot->current_step == mot->burst_target_step) {
-                    /* caught up to the horizon - push it out further so SIM
-                       mode spins perpetually instead of stopping */
-                    mot->burst_target_step += SIM_HORIZON_STEPS;
-                }
-            } else { /* MODE_REALTIME */
-                if ((int32_t)(now - mot->next_tick_due_us) >= 0) {
-                    /* Phase 1: fixed 1 degree per tick, every motor -
-                       real per-planet rates come from Jetson data later. */
-                    mot->fractional_steps_owed += (double)mot->steps_per_rev / 360.0;
-                    int32_t whole = (int32_t)mot->fractional_steps_owed;
-                    mot->fractional_steps_owed -= whole;
-
-                    mot->burst_target_step += whole;
-                    mot->next_tick_due_us   = now + REALTIME_TICK_INTERVAL_US;
-                }
+        if (motor_state == MOTOR_STATE_ORBITING && system_mode == MODE_SIM) {
+            if (mot->current_step == mot->burst_target_step) {
+                /* caught up to the horizon - push it out further so SIM
+                   mode spins perpetually instead of stopping */
+                mot->burst_target_step += SIM_HORIZON_STEPS;
             }
         }
-        /* RETURNING_TO_ZERO/MANUAL are currently unreachable - BTN_RESET no
-           longer drives that state machine, see Motor_ButtonReset() above */
+        /* MODE_REALTIME target is set by Motor_SetModeRealtime() (90-deg
+           nudges now, Jetson feed later); RETURNING_TO_ZERO target is set by
+           Motor_ButtonReset(). Both just coast to burst_target_step below. */
 
         if (mot->current_step == mot->burst_target_step) {
             continue; /* idle - nothing to step */
@@ -228,10 +244,10 @@ void Motor_Poll(void)
 
         if ((int32_t)(now - mot->next_due_us) >= 0) {
             /* No acceleration ramp - go straight to this mode's target pace. */
-            if (system_mode == MODE_SIM) {
+            if (motor_state == MOTOR_STATE_ORBITING && system_mode == MODE_SIM) {
                 mot->interval_us = sim_use_fixed_values ? SIM_CRUISE_INTERVAL_US_FIXED[m] : SIM_CRUISE_INTERVAL_US_CALC[m];
             } else {
-                mot->interval_us = MAX_STEP_INTERVAL_US;
+                mot->interval_us = MAX_STEP_INTERVAL_US; /* realtime nudge + homing: uniform pace */
             }
 
             mot->current_step += (mot->burst_target_step > mot->current_step) ? 1 : -1;
@@ -241,7 +257,8 @@ void Motor_Poll(void)
             if (state < 0) state += 8;
             uint8_t nibble = HALF_STEP[state];
 
-            /* SPI clocks reg_buffer[0] out first to alst chip. hence the reversal. */
+            /* SPI clocks reg_buffer[0] out first, and it lands in the LAST
+               chip; motor 0 sits on the first chip - hence the reversal. */
             uint32_t byte_idx = (NUM_MOTORS / 2 - 1) - (m / 2);
             if (m % 2 == 0) {
                 reg_buffer[byte_idx] = (reg_buffer[byte_idx] & 0xF0) | nibble;
