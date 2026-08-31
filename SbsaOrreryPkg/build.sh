@@ -34,19 +34,14 @@
 #   4. SbsaOrreryPkg.dsc (edk2-platforms SbsaQemu.dsc + OrreryPkg)     -> BL33,
 #      combined by GenFds with (3) into SBSA_FLASH0.fd / SBSA_FLASH1.fd
 #
-# WARNING — current status of the BL32 (StandaloneMm) integration:
-#   BL31 genuinely dispatches into BL32 and StandaloneMmCore starts
-#   running in S-EL0, but its first runtime memory-hardening call
-#   (MM_SP_MEMORY_ATTRIBUTES_SET_AARCH64, marking part of its own image
-#   read-only) hits an ASSERT inside TF-A's SPM_MM (spm_mm_main.c:124) —
-#   TF-A's xlat tables for the BL32 region get block-coalesced at boot and
-#   can't be split to page granularity at runtime for this platform. That
-#   ASSERT crashes EL3 entirely, so BL33 never runs when BL32 is included.
-#   Root cause, why the obvious fix (PLAT_XLAT_TABLES_DYNAMIC) makes it
-#   *worse*, and how to attach gdb and watch it happen yourself: see
-#   docs/sbsa_boot_flow.md. Default here is still to build BL32 in, since
-#   that's the point of this package — pass -M for a boot that actually
-#   reaches BL33.
+# BL32 (StandaloneMm) status: BL1->BL2->BL31->BL32->BL33 all boot, and
+# StandaloneMmCore fully initializes (NorFlash/FTW/Variable MM drivers all
+# load and run) with a working secure NV variable store. Getting here took
+# fixing four distinct bugs — xlat table exhaustion, a missing Transfer
+# List handoff (needs vendor/libtl — see below), and a NOR-flash
+# erase-granularity mismatch — see docs/sbsa_boot_flow.md for the full
+# story. Pass -M for the simpler BL1->BL2->BL31->BL33 path with no BL32/
+# SPM_MM at all.
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +49,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 EDK2_DIR="$REPO_ROOT/edk2"
 TFA_DIR="$REPO_ROOT/trusted-firmware-a"
 NON_OSI_SBSA_DIR="$REPO_ROOT/edk2-non-osi/Platform/Qemu/Sbsa"
+LIBTL_DIR="$REPO_ROOT/vendor/libtl"
+TFA_PATCH="$SCRIPT_DIR/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch"
+VARSTORE_TOOL="$REPO_ROOT/tools/make_empty_varstore.py"
 
 # ---------- platform (fixed — this script only builds SbsaOrreryPkg) ----------
 ARCH="AARCH64"
@@ -144,6 +142,19 @@ cd "$REPO_ROOT"
 # link with "undefined reference to spm_mm_setup"). Always start clean.
 rm -rf "$TFA_DIR/build/qemu_sbsa"
 
+# trusted-firmware-a is a pinned upstream submodule — this patch (fixing
+# xlat-table exhaustion when BL32/SPM_MM enables PLAT_XLAT_TABLES_DYNAMIC;
+# see docs/sbsa_boot_flow.md "Bug #2") is ours, applied on top rather than
+# committed into the submodule. Idempotent: skip if already applied.
+if [[ "$SKIP_BL32" -eq 0 ]]; then
+    if git -C "$TFA_DIR" apply --reverse --check "$TFA_PATCH" 2>/dev/null; then
+        echo "→ TF-A qemu_sbsa xlat-tables patch already applied"
+    else
+        echo "→ Applying TF-A qemu_sbsa xlat-tables patch..."
+        git -C "$TFA_DIR" apply "$TFA_PATCH"
+    fi
+fi
+
 if [[ "$SKIP_BL32" -eq 0 ]]; then
     # ---------- stage 1: StandaloneMm (BL32) -----------------------------------
     echo ""
@@ -160,6 +171,18 @@ if [[ "$SKIP_BL32" -eq 0 ]]; then
     # ---------- stage 2: trusted-firmware-a (BL1/BL2/BL31, BL32=StandaloneMm) --
     echo ""
     echo "→ [2/4] Building trusted-firmware-a (PLAT=qemu_sbsa, BL32=StandaloneMm, SPM_MM=1)..."
+    if [[ ! -f "$LIBTL_DIR/include/transfer_list.h" ]]; then
+        echo "ERROR: $LIBTL_DIR not found — this is our own hand-written Transfer"
+        echo "       List library (see vendor/libtl/include/transfer_list.h for why:"
+        echo "       upstream contrib/libtl only lives on a Gerrit host our sandbox"
+        echo "       can't reach). It should be committed in-tree; check it wasn't"
+        echo "       deleted."
+        exit 1
+    fi
+    # HOB_LIST=1 TRANSFER_LIST=1: BL2 hands BL31/BL32 a Transfer List (not
+    # the legacy HOB pointer) — required by our edk2 vintage's
+    # ArmStandaloneMmCoreEntryPoint.c, which hard-fails otherwise. See
+    # docs/sbsa_boot_flow.md and vendor/libtl's header comment.
     # DEBUG=1 regardless of $BUILD_TYPE: RELEASE hits a GCC13 LTO
     # type-mismatch bug in TF-A's percpu_data (-Werror=lto-type-mismatch);
     # ENABLE_LTO=0 on the command line does NOT fix it — defaults.mk's
@@ -167,6 +190,7 @@ if [[ "$SKIP_BL32" -eq 0 ]]; then
     # regardless. See docs/sbsa_boot_flow.md.
     make -C "$TFA_DIR" PLAT=qemu_sbsa DEBUG=1 \
         BL32="$STMM_FD" SPM_MM=1 EL3_EXCEPTION_HANDLING=1 \
+        HOB_LIST=1 TRANSFER_LIST=1 LIBTL_PATH="$LIBTL_DIR" \
         all fip -j"$(nproc)"
 
     TFA_OUT="$TFA_DIR/build/qemu_sbsa/debug"
@@ -174,12 +198,6 @@ if [[ "$SKIP_BL32" -eq 0 ]]; then
         echo "ERROR: trusted-firmware-a build did not produce bl1.bin/fip.bin in $TFA_OUT"
         exit 1
     fi
-
-    echo ""
-    echo "  ⚠ BL32/StandaloneMm is built in but currently ASSERTs inside TF-A"
-    echo "    (spm_mm_main.c:124) before BL33 ever runs — see the WARNING in"
-    echo "    this script's header and docs/sbsa_boot_flow.md. Pass -M to build"
-    echo "    without BL32 for a boot that actually reaches the UEFI shell."
 
     # ---------- stage 3: stage TF-A binaries for the edk2 FDF to embed --------
     echo ""
@@ -224,12 +242,49 @@ mkdir -p "$VARS_DIR"
 FLASH_SIZE=$((256 * 1024 * 1024))
 
 FLASH0_PADDED="$VARS_DIR/SBSA_FLASH0_${BUILD_TYPE}.fd"
+
+# SBSA_FLASH0.fd is TF-A's device (BL1+FIP, rebuilt every time — GenFds
+# only emits the "used" prefix, well under QEMU_SECURE_VARSTORE_BASE), but
+# StandaloneMm's secure NV variable store also lives in this same bank, at
+# QEMU_SECURE_VARSTORE_BASE (0x01000000, see NorFlashSbsaQemuLib.c) — past
+# where GenFds's output ends. A plain overwrite would silently wipe any
+# variables a previous boot persisted there, so preserve that window
+# across the rebuild the same way FLASH1 (below) preserves its own vars.
+# Only relevant when BL32/StandaloneMm is actually built in.
+SECURE_VARSTORE_OFFSET=$((0x01000000))
+SECURE_VARSTORE_SIZE=$((3 * 256 * 1024))   # Variable + FtwWorking + FtwSpare, 256KB each
+OLD_VARSTORE="$(mktemp)"
+HAVE_OLD_VARSTORE=0
+if [[ "$SKIP_BL32" -eq 0 ]] && [[ -f "$FLASH0_PADDED" ]] && \
+   [[ "$(stat -c%s "$FLASH0_PADDED")" -ge $((SECURE_VARSTORE_OFFSET + SECURE_VARSTORE_SIZE)) ]]; then
+    dd if="$FLASH0_PADDED" of="$OLD_VARSTORE" bs=1 skip="$SECURE_VARSTORE_OFFSET" \
+        count="$SECURE_VARSTORE_SIZE" status=none
+    HAVE_OLD_VARSTORE=1
+fi
+
 cp "$FV_DIR/SBSA_FLASH0.fd" "$FLASH0_PADDED"
 truncate -s "$FLASH_SIZE" "$FLASH0_PADDED"
 
-# FLASH1 holds BL33 code *and* the NV variable store — persistent across
-# runs, like Q35's OVMF_VARS.fd / ArmVirt's QEMU_VARS.fd. Only seed it if
-# missing so provisioned variables survive a rebuild.
+if [[ "$SKIP_BL32" -eq 0 ]]; then
+    if [[ "$HAVE_OLD_VARSTORE" -eq 1 ]]; then
+        dd if="$OLD_VARSTORE" of="$FLASH0_PADDED" bs=1 seek="$SECURE_VARSTORE_OFFSET" \
+            conv=notrunc status=none
+    fi
+    # make_empty_varstore.py is idempotent: it only (re)formats if what's
+    # already at --offset isn't a validly-headered store, so this is safe
+    # to call unconditionally — it preserves a real restored store above
+    # and reformats stale/absent/pre-this-feature content (e.g. a vars/
+    # image from before the secure NV store existed) instead of quietly
+    # propagating garbage forward.
+    python3 "$VARSTORE_TOOL" "$FLASH0_PADDED" --offset "$SECURE_VARSTORE_OFFSET" \
+        --var-size $((256 * 1024)) --ftw-working-size $((256 * 1024)) --ftw-spare-size $((256 * 1024))
+fi
+rm -f "$OLD_VARSTORE"
+
+# FLASH1 holds BL33 code *and* the non-secure NV variable store —
+# persistent across runs, like Q35's OVMF_VARS.fd / ArmVirt's
+# QEMU_VARS.fd. Only seed it if missing so provisioned variables survive a
+# rebuild.
 FLASH1_PADDED="$VARS_DIR/SBSA_FLASH1_${BUILD_TYPE}.fd"
 if [[ ! -f "$FLASH1_PADDED" ]]; then
     echo "→ Seeding fresh FLASH1 (vars) image"

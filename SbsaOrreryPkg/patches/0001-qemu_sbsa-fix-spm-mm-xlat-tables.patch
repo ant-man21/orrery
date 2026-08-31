@@ -1,0 +1,53 @@
+diff --git a/plat/qemu/qemu_sbsa/include/platform_def.h b/plat/qemu/qemu_sbsa/include/platform_def.h
+index 59807fa..d9f6b3b 100644
+--- a/plat/qemu/qemu_sbsa/include/platform_def.h
++++ b/plat/qemu/qemu_sbsa/include/platform_def.h
+@@ -198,7 +198,27 @@
+ 
+ #define PLAT_PHY_ADDR_SPACE_SIZE	(1ull << 42)
+ #define PLAT_VIRT_ADDR_SPACE_SIZE	(1ull << 42)
+-#if SPM_MM
++#if SPM_MM && defined(IMAGE_BL31)
++/*
++ * ORRERY: bumped from 13/13, BL31 only. With PLAT_XLAT_TABLES_DYNAMIC
++ * enabled (see platform.mk), xlat_table_get_empty() no longer asserts on
++ * exhaustion — it returns NULL, which the caller doesn't check, so
++ * running out of table/region slots is a silent NULL-pointer fault
++ * during BL31's own (pre-console-init) MMU bring-up: zero serial output,
++ * implicit reset. 13 wasn't enough headroom once dynamic-region
++ * bookkeeping is active; this is deliberately generous (each table is
++ * 4KB, BL31_SIZE is 4MB).
++ *
++ * Scoped to IMAGE_BL31 specifically — this same platform_def.h is also
++ * used to build BL1 (RW budget: BL1_SIZE, a mere 72KB) and BL2 whenever
++ * SPM_MM=1 is set, since SPM_MM is a build-wide flag, not an
++ * image-specific one. Bumping this unscoped blew BL1's link ("region RAM
++ * overflowed by 65536 bytes") — BL1/BL2 never call the dynamic
++ * attribute-change path, so they don't need the extra headroom.
++ */
++#define MAX_MMAP_REGIONS		32
++#define MAX_XLAT_TABLES			32
++#elif SPM_MM
+ #define MAX_MMAP_REGIONS		13
+ #define MAX_XLAT_TABLES			13
+ #elif ENABLE_RMM
+diff --git a/plat/qemu/qemu_sbsa/platform.mk b/plat/qemu/qemu_sbsa/platform.mk
+index 8cc6004..467012c 100644
+--- a/plat/qemu/qemu_sbsa/platform.mk
++++ b/plat/qemu/qemu_sbsa/platform.mk
+@@ -18,6 +18,15 @@ ENABLE_STACK_PROTECTOR	 := 0
+ ifeq (${SPM_MM},1)
+ NEED_BL32		:=	yes
+ EL3_EXCEPTION_HANDLING	:=	1
++# ORRERY: required for StandaloneMm's runtime self-protect call
++# (MM_SP_MEMORY_ATTRIBUTES_SET_AARCH64) to succeed — without it, TF-A's
++# xlat tables get block-coalesced at boot and can't be split back down to
++# page granularity when BL32 asks to change permissions on part of its own
++# image. See docs/sbsa_boot_flow.md ("Bug #2") for the full story,
++# including why this alone regressed BL31 until MAX_MMAP_REGIONS/
++# MAX_XLAT_TABLES were also bumped in platform_def.h.
++BL31_CPPFLAGS		+=	-DPLAT_XLAT_TABLES_DYNAMIC
++BL32_CPPFLAGS		+=	-DPLAT_XLAT_TABLES_DYNAMIC
+ endif
+ 
+ include plat/qemu/common/common.mk

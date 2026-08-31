@@ -81,9 +81,14 @@ Three, alongside the existing `edk2` one:
 
 | Submodule | What it provides |
 |---|---|
-| `trusted-firmware-a` | BL1/BL2/BL31 source, and wraps a pre-built BL32 into the FIP when given one |
+| `trusted-firmware-a` | BL1/BL2/BL31 source, and wraps a pre-built BL32 into the FIP when given one. `build.sh` applies `SbsaOrreryPkg/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch` on top before building (bug #2, below) — the submodule itself stays unmodified/pinned |
 | `edk2-platforms` | `Platform/Qemu/SbsaQemu/SbsaQemu.dsc` — BL33 (pinned to commit `d5a9ea8`, *one commit before* `edk2-platforms` started requiring `MdeModulePkg/Library/GptLib`, which doesn't exist in our `edk2` fork's vintage yet — a straight version-skew fix, not a feature choice) |
 | `edk2-non-osi` | Just a landing spot: `Platform/Qemu/Sbsa/{bl1,fip}.bin`, staged by `build.sh` from our own TF-A build, consumed by `SbsaQemu.fdf`'s `FILE =` regions |
+
+`vendor/libtl/` is **not** a submodule — it's our own hand-written Transfer
+List library (bug #3, below), checked straight into this repo since
+upstream's reference implementation lives on a Gerrit host this
+environment can't reach.
 
 `SbsaOrreryPkg/StandaloneMm/` (BL32's DSC/FDF) is **ours**, not upstream —
 `edk2-platforms`' own `Platform/Qemu/SbsaQemu/Readme.md` only documents
@@ -98,7 +103,7 @@ values pulled straight out of
 |---|---|---|
 | BL32 load address / size | `0x2000_8000` / `0x30_0000` | `PLAT_QEMU_SP_IMAGE_BASE` / `_SIZE` |
 | Secure UART (StMm's own console, separate from BL31's/BL33's) | `0x6004_0000` | `UART2_BASE`, commented "Secure UART" |
-| Secure NV variable store | `0x0100_0000`, 1 MiB reserved (we use the first 256 KiB) | `QEMU_SECURE_VARSTORE_BASE/_SIZE` |
+| Secure NV variable store | `0x0100_0000`, 1 MiB reserved (we use 768 KiB: 3 x 256 KiB regions — see bug #4) | `QEMU_SECURE_VARSTORE_BASE/_SIZE` |
 
 The NOR flash driver for that variable store
 (`SbsaOrreryPkg/StandaloneMm/Library/NorFlashSbsaQemuLib`) is a from-scratch
@@ -106,26 +111,25 @@ The NOR flash driver for that variable store
 same generic `P30NorFlashDeviceLib`/`NorFlashStandaloneMm.inf` pair, just
 pointed at the address above instead of Juno's SPI-NOR offsets.
 
-## Current status: BL1→BL33 works, BL32 doesn't reach BL33 yet
+## Current status: full BL1→BL32→BL33 boot works
 
-Two things are true at once, and it's worth being precise about which is
-which:
+Both configurations are fully verified:
 
-- **`./build.sh -M`** — BL1→BL2→BL31→BL33, no BL32 at all — is fully
-  verified. It reaches the interactive TianoCore front page with
-  `Boot0001: UEFI Shell` enumerated as a boot option. This is "TF-A does
-  early boot" in full, and it's solid.
-- **`./build.sh`** (default, BL32 included) — BL31 genuinely dispatches
-  into BL32; StandaloneMmCore actually starts running at S-EL0 (you can see
-  it print `Secure Partition init...` over EL3's console). But its very
-  first runtime action — asking TF-A to mark part of its own image
-  read-only via the `MM_SP_MEMORY_ATTRIBUTES_SET_AARCH64` SMC — trips an
-  `ASSERT` inside TF-A itself, which halts EL3 outright. BL33 never gets a
-  chance to run.
+- **`./build.sh -M`** — BL1→BL2→BL31→BL33, no BL32 at all. Reaches the
+  interactive TianoCore front page with `Boot0001: UEFI Shell` enumerated
+  as a boot option. The simple path, useful when you just want a boot and
+  don't care about StandaloneMm.
+- **`./build.sh`** (default, BL32 included) — BL1→BL2→BL31→BL32→BL33, the
+  whole chain. BL31 dispatches into BL32; StandaloneMmCore runs its full
+  init (loads all four MM drivers — `StandaloneMmCpu`, `NorFlashStandaloneMm`,
+  `FaultTolerantWriteStandaloneMm`, `VariableStandaloneMm` — with a working
+  secure NV variable store), returns control to BL31, and BL31 hands off to
+  BL33, which reaches the same TianoCore front page.
 
-The rest of this doc is the story of finding that, and of the two smaller
-bugs on the way to it — because the debugging process is the actual
-deliverable here.
+Getting from "BL32 asserts on its first SMC" to this took four distinct
+bugs, in the order they were found. Each is documented below with what it
+looked like, why it happened, and the fix — because the debugging process
+is the actual deliverable here, not just the diff.
 
 ## Bug #1: a QEMU-version gap that looks exactly like a hang
 
@@ -234,7 +238,7 @@ not set this at all. QEMU's SBSA platform in TF-A has SPM_MM plumbing, but
 it was never finished/tested against a StandaloneMmCore new enough to
 require runtime page-attribute changes.
 
-**Tried, and made it worse**: passing
+**First attempt, and why it made things worse**: passing
 `BL31_CPPFLAGS=-DPLAT_XLAT_TABLES_DYNAMIC BL32_CPPFLAGS=-DPLAT_XLAT_TABLES_DYNAMIC`
 straight to `make` (after confirming a *clean* `build/qemu_sbsa` — TF-A's
 build doesn't track flag changes in its dependency files, so a stale build
@@ -245,10 +249,155 @@ banner*, i.e. before it even finishes bringing up its own initial MMU
 state. `PLAT_XLAT_TABLES_DYNAMIC` changes assumptions throughout
 `xlat_tables_v2` (reserved table counts, region bookkeeping) that
 `qemu_sbsa`'s `platform_def.h` — never written with this flag in mind —
-doesn't budget for. Fixing it properly needs the kind of
-`MAX_XLAT_TABLES`/`MAX_MMAP_REGIONS` (re)tuning Juno's own
-`platform_def.h` does alongside the flag, not just the flag by itself.
-Left as the concrete next step rather than chased further here.
+doesn't budget for: with dynamic tables, `xlat_table_get_empty()` returns
+`NULL` on exhaustion instead of asserting, and the caller doesn't check —
+a silent NULL-pointer data abort during BL31's own pre-console-init MMU
+bring-up, which looks exactly like the process being reset (zero output).
+
+**The actual fix**: bump `MAX_MMAP_REGIONS`/`MAX_XLAT_TABLES` from 13 to 32
+alongside the flag — but *only* for `IMAGE_BL31`, not unconditionally.
+`platform_def.h` is shared across BL1/BL2/BL31 whenever `SPM_MM=1` (it's a
+build-wide flag, not image-specific), and BL1's RW budget is a mere 72 KiB
+(`BL1_SIZE`) — bumping the table count unscoped blows BL1's link
+(`region 'RAM' overflowed by 65536 bytes`). Scoping the bump to
+`#if SPM_MM && defined(IMAGE_BL31)` (mirroring the pattern TF-A's own
+`PLAT_SP_IMAGE_MMAP_REGIONS`/`PLAT_SP_IMAGE_MAX_XLAT_TABLES` already use
+right below it) fixes both problems: BL31 gets the headroom dynamic tables
+need, BL1 keeps its tight budget. Combined with the `PLAT_XLAT_TABLES_DYNAMIC`
+flag, `MM_SP_MEMORY_ATTRIBUTES_SET_AARCH64` now succeeds every time
+StandaloneMmCore calls it — confirmed by tracing
+`xlat_change_mem_attributes_ctx()`'s return value through every call during
+a full boot (all zero/success).
+
+This fix lives in `trusted-firmware-a` — a pinned upstream submodule we
+don't own — as
+`SbsaOrreryPkg/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch`,
+applied by `build.sh` before each build (idempotently: it checks whether
+the patch is already applied via `git apply --reverse --check` first).
+
+## Bug #3: BL32 loads, but edk2 refuses the handoff outright
+
+With bug #2 fixed, the assert is gone — but StandaloneMmCore now fails
+even earlier, before printing anything of its own:
+
+```
+INFO:    BL31: Initializing BL32
+INFO:    Secure Partition init...
+<BL32 never prints "Secure Partition init..." from *its own* side, or anything else>
+```
+
+Attaching gdb at BL32's entry point (`PLAT_QEMU_SP_IMAGE_BASE`, see the
+debugging section below) shows execution reaching
+`ArmPkg/Library/ArmStandaloneMmCoreEntryPoint/ArmStandaloneMmCoreEntryPoint.c`'s
+`ValidateSpmMmBootInfo()`, which hard-fails with `EFI_INVALID_PARAMETER`
+and returns before StandaloneMmCore's own init ever runs. That function's
+whole job is to find one specific thing in the registers TF-A handed it at
+entry (`X0`-`X3` per the SPM_MM boot protocol): either a legacy HOB-list
+pointer, or a **Transfer List** — a standardized "Firmware Handoff"
+container (header + tagged entries) newer TF-A/edk2 versions use instead.
+Our edk2 vintage's `ArmStandaloneMmCoreEntryPoint.c` only implements the
+Transfer List path — the legacy HOB-pointer fallback was removed upstream
+(commit `a5212d3db7`, `HOB_LIST -> TRANSFER_LIST` migration; 18 further
+commits have since touched the same file — reverting a5212d3db7 would
+mean giving all of those up too, so that was ruled out early). TF-A's
+`qemu_sbsa` port, as built by default, only knows how to hand off the
+*legacy* way. Neither side is wrong; they're both correct implementations
+of two different, non-overlapping generations of the same handoff
+protocol.
+
+**Confirming this is a real, supported combination and not a guess**:
+`edk2-platforms/Platform/ARM/Readme.md` documents `HOB_LIST=1
+TRANSFER_LIST=1` as the officially-maintained TF-A build flags for exactly
+this edk2-vintage + SPM_MM combination, on Juno and FVP.
+
+**The complication**: TF-A's own reference implementation of the Transfer
+List library (`contrib/libtl`, referenced by `TRANSFER_LIST=1` builds via
+`LIBTL_PATH`) isn't vendored into the `trusted-firmware-a` tree — it's
+pulled from `review.trustedfirmware.org/shared/transfer-list-library`, a
+Gerrit host outright blocked by this environment's network egress policy,
+with no GitHub mirror found under any name for that specific
+sub-repository (unlike `trusted-firmware-a` itself, which *is* mirrored on
+GitHub).
+
+**Fix**: `vendor/libtl/` — a from-scratch, minimal implementation of just
+the Transfer List operations `qemu_bl2_setup.c`/`qemu_bl31_setup.c`/
+`spm_mm_setup.c` actually call (`transfer_list_init`, `_add`,
+`_check_header`, `_entry_data`, `_relocate`, `_dump`, plus the AArch64
+handoff-argument helper), built against the real, public [Firmware
+Handoff spec](https://github.com/FirmwareHandoff/firmware_handoff) — but
+with every struct layout and tag-ID value copied field-for-field from
+`edk2/ArmPkg/Include/IndustryStandard/ArmTransferList.h`, i.e. from the
+actual consumer we need to interoperate with, not just the spec text. See
+`vendor/libtl/include/transfer_list.h`'s header comment for the full
+provenance story. `build.sh` passes `HOB_LIST=1 TRANSFER_LIST=1
+LIBTL_PATH=vendor/libtl` when building TF-A with BL32 included.
+
+## Bug #4: a NOR-flash erase-granularity mismatch wipes the variable store
+
+With bug #3 fixed, StandaloneMmCore finally runs its real init: all four MM
+drivers load, `NorFlashStandaloneMm` and `FaultTolerantWriteStandaloneMm`
+both self-format their regions cleanly — and then `VariableStandaloneMm`
+asserts:
+
+```
+Firmware Volume for Variable Store is corrupted
+ASSERT_EFI_ERROR (Status = Volume Corrupt)
+ASSERT [VariableStandaloneMm] VariableSmm.c(1164)
+```
+
+despite `NorFlashStandaloneMm` having *just* validated a header at that
+exact same address moments earlier. The first suspect was our own
+`tools/make_empty_varstore.py` (written to seed a fresh
+`EFI_FIRMWARE_VOLUME_HEADER`+`VARIABLE_STORE_HEADER`+FTW-working-block into
+the secure NV region, since nothing else formats it on first boot) — and it
+did have a real, confirmed bug: `NorFlashFvb.c`'s `ValidateFvHeader()`
+checks `VariableStoreHeader->Size == PcdFlashNvStorageVariableSize -
+FwVolHeader->HeaderLength`, and the script was subtracting the
+`VARIABLE_STORE_HEADER`'s own size a second time, undercounting `Size` by
+28 bytes. Fixing that made `NorFlashStandaloneMm`'s own validation stop
+complaining — but `VariableStandaloneMm` kept failing identically.
+
+**Isolating the real cause** took a byte-level marker test: fill the whole
+1 MiB secure NV reserve with a `0xAA` marker, format only the header
+regions on top, boot, then diff the *entire* reserve against the marker
+afterward. Result: the Variable region and FtwWorking region came back
+erased (`0xFF`) — even though nothing should touch them between
+`NorFlashStandaloneMm`'s validation and `VariableStandaloneMm`'s read —
+while `FaultTolerantWriteStandaloneMm` ran in between and logged "Both
+working and spare blocks are invalid, init workspace" / "reclaim work
+space successfully" every single boot, regardless of what was actually
+written there beforehand.
+
+The root cause: our original NV layout gave each of the three regions
+(Variable / FtwWorking / FtwSpare) only **64 KiB**, matching the
+`NOR_FLASH_DESCRIPTION` block size we'd chosen — but QEMU's `sbsa-ref`
+secure pflash device's *actual* erase-sector granularity is **256 KiB**.
+`FtwReclaimWorkSpace()`'s block-erase calls, sized to what the driver
+*thinks* is one logical block, end up erasing the real (larger) physical
+sector underneath — which spans across our 64 KiB region boundaries and
+wipes the neighboring Variable store's header as a side effect. This is
+exactly the failure mode a 64 KiB layout invites and a 256-KiB-aligned one
+doesn't: it's also why the reference platforms (Juno, VExpress, and
+`SbsaQemu.fdf`'s own *non-secure* store) all use 256 KiB per region rather
+than something smaller.
+
+**Fix**: resize all three regions to 256 KiB each (768 KiB total, still
+comfortably inside the 1 MiB TF-A/QEMU reserve at `QEMU_SECURE_VARSTORE_BASE`)
+in `SbsaOrreryStandaloneMm.dsc`'s NV storage PCDs and
+`NorFlashSbsaQemuLib.c`'s device descriptor. With matching erase
+granularity, `FaultTolerantWriteStandaloneMm`'s reclaim path stays inside
+its own region, and `VariableStandaloneMm` initializes cleanly — full
+`BL1→BL32→BL33` boot reaches the UEFI Boot Manager front page with no
+asserts anywhere in the chain.
+
+`tools/make_empty_varstore.py` is idempotent (it checks for an
+already-valid header before formatting, `--force` to override) so
+`build.sh` can call it unconditionally on every build without clobbering
+variables a previous boot persisted — the same "only touch it if it's
+missing/invalid" pattern `qemu.sh`/`build.sh` already use for the VARS
+files on the other two platforms, applied at byte-region granularity
+inside `SBSA_FLASH0.fd` (which also holds BL1+FIP, rebuilt fresh every
+time, unlike `SBSA_FLASH1.fd` which is skipped once it exists).
 
 ## Debugging this yourself
 
@@ -285,7 +434,7 @@ continue
 # BL32/StandaloneMm — loaded at the fixed PLAT_QEMU_SP_IMAGE_BASE
 # (0x20008000), matches "Loading image id=4 at address 0x...":
 add-symbol-file Build/SbsaOrreryStandaloneMm/DEBUG_GCC/AARCH64/StandaloneMmPkg/Core/StandaloneMmCore/DEBUG/StandaloneMmCore.dll 0x20008000
-break spm_mm_main.c:124        # to catch the assert from bug #2 in the act
+break ArmStandaloneMmCoreEntryPoint  # or ValidateSpmMmBootInfo, spm_mm_main.c:124, etc.
 continue
 
 # BL33 — GenFds-decompressed load address varies per build; the DEBUG
@@ -305,13 +454,14 @@ own crash console is `UART1`; StMm's console is `UART2`, per
 `SbsaOrreryStandaloneMm.dsc`'s `PcdSerialRegisterBase`. Add
 `-serial file:secure.log` (or a second `-serial mon:stdio`) to `qemu.sh`'s
 extra-args (`-- -serial file:secure.log`) to see StMm's own prints
-separately once you're past bug #2.
+separately.
 
 ## What a working MM_COMMUNICATE round trip would look like
 
-For context on where this was headed: once BL32 actually reaches BL33, the
-plan (not yet wired into `SbsaOrreryPkg.dsc`, which still uses stock
-`VariableRuntimeDxe` talking directly to non-secure flash) is to swap BL33's
+BL32 now boots cleanly end to end (bugs #1-#4 above), but BL33 and BL32
+still don't actually talk to each other yet — `SbsaOrreryPkg.dsc` still
+uses stock `VariableRuntimeDxe` talking directly to non-secure flash, same
+as before StandaloneMm was wired in at all. The plan is to swap BL33's
 variable stack for the MM-communicating one — `VariableSmmRuntimeDxe` +
 `MmCommunicationDxe` (ArmPkg's SMC-based one) in place of
 `VariableRuntimeDxe`, matching what's already built for BL32:

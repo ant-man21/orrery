@@ -70,12 +70,21 @@
   # slices up. QEMU_SECURE_VARSTORE_BASE (0x01000000) is TF-A's fixed
   # secure-flash window for StMM's own NV storage.
   #
+  # Each region is a full 256KB — matching the erase-sector granularity
+  # QEMU's sbsa-ref secure pflash actually enforces (confirmed empirically:
+  # a 64KB-per-region layout let FaultTolerantWriteStandaloneMm's workspace
+  # "reclaim" path erase across region boundaries, wiping out the Variable
+  # store's header before VariableStandaloneMm ever read it). This mirrors
+  # the 256KB-per-region convention edk2-platforms' own SbsaQemu.fdf uses
+  # for the non-secure store, and fits inside the 1MB TF-A/QEMU reserve
+  # (see NorFlashSbsaQemuLib.c) with room to spare.
+  #
   gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageVariableBase|0x01000000
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageVariableSize|0x00010000
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwWorkingBase|0x01010000
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwWorkingSize|0x00010000
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwSpareBase|0x01020000
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwSpareSize|0x00010000
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageVariableSize|0x00040000
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwWorkingBase|0x01040000
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwWorkingSize|0x00040000
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwSpareBase|0x01080000
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFlashNvStorageFtwSpareSize|0x00040000
 
   gEfiMdeModulePkgTokenSpaceGuid.PcdMaxVariableSize|0x2000
   gEfiMdeModulePkgTokenSpaceGuid.PcdMaxAuthVariableSize|0x2800
