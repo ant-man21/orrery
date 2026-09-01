@@ -1,0 +1,30 @@
+## PlatformRomInfoLibSbsaQemu.inf
+##
+## PlatformRomInfoLib instance for QEMU sbsa-ref — reads the standard
+## ArmPkg PcdFvBaseAddress/PcdFvSize pair, patched by GenFds from
+## SbsaQemu.fdf's FVMAIN_COMPACT region line (SBSA_FLASH1, offset 0x0,
+## size 0x300000). Same story as PlatformRomInfoLibArmVirt — see its .c
+## file and docs/rom_discovery_story.md.
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = PlatformRomInfoLibSbsaQemu
+  FILE_GUID       = 4e6a1d8b-2c3f-4a5e-8b9c-0d1e2f3a4b5c
+  MODULE_TYPE     = BASE
+  VERSION_STRING  = 1.0
+  LIBRARY_CLASS   = PlatformRomInfoLib
+
+[Sources]
+  PlatformRomInfoLibSbsaQemu.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  OrreryPkg/OrreryPkg.dec
+
+[LibraryClasses]
+  PcdLib
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFvBaseAddress   ## CONSUMES
+  gArmTokenSpaceGuid.PcdFvSize          ## CONSUMES

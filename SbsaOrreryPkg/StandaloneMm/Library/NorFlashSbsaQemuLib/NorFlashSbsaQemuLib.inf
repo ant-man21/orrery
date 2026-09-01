@@ -1,0 +1,39 @@
+#/** @file
+#
+#  NorFlashPlatformLib instance for QEMU sbsa-ref's secure variable store.
+#
+#  TF-A's qemu_sbsa platform (plat/qemu/qemu_sbsa/include/platform_def.h,
+#  QEMU_SECURE_VARSTORE_BASE/SIZE) carves out a fixed 1 MB window inside the
+#  secure boot flash (SBSA_FLASH0, the same CFI pflash device that holds
+#  BL1+FIP) at 0x01000000 for the secure world's own NV storage. BL31's SPM_MM
+#  setup (plat/qemu/common/qemu_spm.c, MAP_SECURE_VARSTORE) maps that window
+#  MT_DEVICE|MT_RW into the Secure Partition's address space, so this is a
+#  real CFI NOR flash chip from StandaloneMm's point of view — same command
+#  sequences as the ArmVirt/Q35 NOR flash driver, just reachable only from
+#  Secure world.
+#
+#  Copyright (c) 2026, Orrery Project.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+#**/
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = NorFlashSbsaQemuLib
+  FILE_GUID                      = 8b7c9b3e-1a5b-4c1a-9c8a-9a2b0f6d7e01
+  MODULE_TYPE                    = MM_STANDALONE
+  VERSION_STRING                 = 1.0
+  PI_SPECIFICATION_VERSION       = 0x00010032
+  LIBRARY_CLASS                  = NorFlashPlatformLib
+
+[Sources.common]
+  NorFlashSbsaQemuLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  Platform/ARM/ARM.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
