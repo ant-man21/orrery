@@ -92,6 +92,20 @@ VARS_DIR="$SCRIPT_DIR/vars"
 FLASH0="$VARS_DIR/SBSA_FLASH0_${BUILD_TYPE}.fd"
 FLASH1="$VARS_DIR/SBSA_FLASH1_${BUILD_TYPE}.fd"
 
+# When BL32 is built in, MM_COMMUNICATE's shared buffer address
+# (gArmTokenSpaceGuid.PcdMmBufferBase in SbsaQemu.dsc) is baked in at BL33
+# build time as "top of DRAM minus 2MB" for a *specific* -m value —
+# because TF-A computes that same address at runtime from actual DRAM
+# size, not a fixed constant (see docs/sbsa_boot_flow.md). Changing -m
+# without rebuilding after also updating that PCD makes BL33 and BL32
+# disagree about where the buffer is — silently, not a crash.
+if [[ "$MEM_MB" -ne 1024 ]]; then
+    echo "⚠ -m ${MEM_MB} != 1024: if this build has BL32/MM_COMMUNICATE enabled," >&2
+    echo "  its PcdMmBufferBase assumes -m 1024. See SbsaQemu.dsc's comment on" >&2
+    echo "  PcdMmBufferBase and docs/sbsa_boot_flow.md before trusting variable" >&2
+    echo "  reads/writes at this RAM size." >&2
+fi
+
 # ---------- sanity checks -----------------------------------------------------
 if [[ ! -f "$FLASH0" || ! -f "$FLASH1" ]]; then
     echo "ERROR: Flash images not found:"

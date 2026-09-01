@@ -211,8 +211,16 @@ fi
 # ---------- stage 4: BL33 (SbsaOrreryPkg UEFI) + final flash images -----------
 echo ""
 echo "→ [4/4] Building BL33 (SbsaOrreryPkg.dsc) and composing flash images..."
+# ENABLE_STMM routes BL33's variable store through MM_COMMUNICATE into
+# StandaloneMm (BL32) instead of non-secure flash directly — only valid
+# when BL32 is actually present to answer it (see SbsaQemu.dsc's own
+# comment on the flag). Must track $SKIP_BL32, not just default off.
+STMM_BUILD_FLAG=()
+if [[ "$SKIP_BL32" -eq 0 ]]; then
+    STMM_BUILD_FLAG=(-D ENABLE_STMM=TRUE)
+fi
 build -a "$ARCH" -t "$TOOLCHAIN" -b "$EDK2_BUILD_TARGET" -p "$DSC" -n "$(nproc)" \
-    -D TPM2_ENABLE=TRUE
+    -D TPM2_ENABLE=TRUE "${STMM_BUILD_FLAG[@]}"
 
 FV_DIR="$REPO_ROOT/$OUTPUT_DIR/${EDK2_BUILD_TARGET}_${TOOLCHAIN}/FV"
 echo ""
