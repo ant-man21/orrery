@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with Q35 firmware
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
 #   -m MEM          RAM in MB                   (default: 512)
+#   -g              Start paused with a gdbstub on :1234 (qemu -S -s) —
+#                    attach with `gdb -ex 'target remote :1234'` (plain
+#                    gdb is fine here — x86_64, not cross-arch). Symbols:
+#                    Build/OvmfX64/<BUILD_TYPE>_GCC/X64/**/DEBUG/*.dll,
+#                    OVMF's own DEBUG-build serial log prints
+#                    `add-symbol-file <path> 0x<addr>` for each driver as
+#                    it loads — paste those into gdb as they scroll past.
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
 #
@@ -39,6 +46,7 @@ fi
 BUILD_TYPE="RELEASE"
 MEM_MB=512
 RESET_SHARED=0
+GDB=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -51,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         -r)             BUILD_TYPE="RELEASE"; shift ;;
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
+        -g)             GDB=1;                shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
@@ -160,6 +169,11 @@ echo "  CODE fd   : $CODE_FD"
 echo "  VARS fd   : $VARS_FD  (persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
 echo "  Host dir  : $SHARED_DIR"
+GDB_ARGS=()
+if [[ "$GDB" -eq 1 ]]; then
+    GDB_ARGS=(-s -S)
+    echo "  gdbstub   : :1234 (paused at reset — attach before it'll boot)"
+fi
 echo "============================================================"
 echo ""
 
@@ -186,6 +200,7 @@ echo ""
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-tis,tpmdev=tpm0 \
     \
+    "${GDB_ARGS[@]}" \
     "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
 QEMU_PID=$!
 tail -f "$SCRIPT_DIR/debug.log" --pid=$QEMU_PID
