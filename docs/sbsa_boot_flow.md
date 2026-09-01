@@ -79,11 +79,24 @@ of the "used" size edk2 emits — same story as
 
 Three, alongside the existing `edk2` one:
 
-| Submodule | What it provides |
-|---|---|
-| `trusted-firmware-a` | BL1/BL2/BL31 source, and wraps a pre-built BL32 into the FIP when given one. `build.sh` applies `SbsaOrreryPkg/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch` on top before building (bug #2, below) — the submodule itself stays unmodified/pinned |
-| `edk2-platforms` | `Platform/Qemu/SbsaQemu/SbsaQemu.dsc` — BL33 (pinned to commit `d5a9ea8`, *one commit before* `edk2-platforms` started requiring `MdeModulePkg/Library/GptLib`, which doesn't exist in our `edk2` fork's vintage yet — a straight version-skew fix, not a feature choice) |
-| `edk2-non-osi` | Just a landing spot: `Platform/Qemu/Sbsa/{bl1,fip}.bin`, staged by `build.sh` from our own TF-A build, consumed by `SbsaQemu.fdf`'s `FILE =` regions |
+All three point at our own forks (`ant-man21/...`), each on an `orrery`
+branch, the same pattern the existing `edk2` submodule already uses
+(`ant-man21/edk2`, branch `orrery-changes`) — not the upstream repos
+directly, so any fix we need can be a real commit instead of a
+build-time-applied patch, and a fresh clone on any machine gets our exact
+tree with nothing extra to apply:
+
+| Submodule | Fork | What it provides |
+|---|---|---|
+| `trusted-firmware-a` | `ant-man21/arm-trusted-firmware`, branch `orrery` | BL1/BL2/BL31 source, wraps a pre-built BL32 into the FIP when given one. The `orrery` branch carries one commit on top of upstream: the xlat-table exhaustion fix (bug #2, below) |
+| `edk2-platforms` | `ant-man21/edk2-platforms`, branch `orrery` | `Platform/Qemu/SbsaQemu/SbsaQemu.dsc` — BL33 (branched at commit `d5a9ea8`, *one commit before* `edk2-platforms` started requiring `MdeModulePkg/Library/GptLib`, which doesn't exist in our `edk2` fork's vintage yet — a straight version-skew fix, not a feature choice; no local commits on top yet) |
+| `edk2-non-osi` | `ant-man21/edk2-non-osi`, branch `orrery` | Just a landing spot: `Platform/Qemu/Sbsa/{bl1,fip}.bin`, staged by `build.sh` from our own TF-A build, consumed by `SbsaQemu.fdf`'s `FILE =` regions. The `orrery` branch stops tracking those two files (they're our own build output, regenerated every run — the upstream repo had them checked in, which just meant every build looked like a dirty submodule) |
+
+Note `arm-trusted-firmware` vs. `trusted-firmware-a` in the URL: TF-A is
+mirrored on GitHub under two different owners — `TrustedFirmware-A/trusted-firmware-a`
+and `ARM-software/arm-trusted-firmware` — kept in sync at the commit-object
+level (verified: our exact pinned commit exists identically in both). We
+forked from the `ARM-software` one; either works.
 
 `vendor/libtl/` is **not** a submodule — it's our own hand-written Transfer
 List library (bug #3, below), checked straight into this repo since
@@ -269,11 +282,10 @@ StandaloneMmCore calls it — confirmed by tracing
 `xlat_change_mem_attributes_ctx()`'s return value through every call during
 a full boot (all zero/success).
 
-This fix lives in `trusted-firmware-a` — a pinned upstream submodule we
-don't own — as
-`SbsaOrreryPkg/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch`,
-applied by `build.sh` before each build (idempotently: it checks whether
-the patch is already applied via `git apply --reverse --check` first).
+This fix is a real commit on the `orrery` branch of our
+`trusted-firmware-a` fork (`ant-man21/arm-trusted-firmware`) — see
+"Submodules added for this platform" above for why we fork rather than
+patch at build time.
 
 ## Bug #3: BL32 loads, but edk2 refuses the handoff outright
 

@@ -50,7 +50,6 @@ EDK2_DIR="$REPO_ROOT/edk2"
 TFA_DIR="$REPO_ROOT/trusted-firmware-a"
 NON_OSI_SBSA_DIR="$REPO_ROOT/edk2-non-osi/Platform/Qemu/Sbsa"
 LIBTL_DIR="$REPO_ROOT/vendor/libtl"
-TFA_PATCH="$SCRIPT_DIR/patches/0001-qemu_sbsa-fix-spm-mm-xlat-tables.patch"
 VARSTORE_TOOL="$REPO_ROOT/tools/make_empty_varstore.py"
 
 # ---------- platform (fixed — this script only builds SbsaOrreryPkg) ----------
@@ -141,19 +140,6 @@ cd "$REPO_ROOT"
 # config (seen firsthand: a plain rebuild after an SPM_MM=1 one failed to
 # link with "undefined reference to spm_mm_setup"). Always start clean.
 rm -rf "$TFA_DIR/build/qemu_sbsa"
-
-# trusted-firmware-a is a pinned upstream submodule — this patch (fixing
-# xlat-table exhaustion when BL32/SPM_MM enables PLAT_XLAT_TABLES_DYNAMIC;
-# see docs/sbsa_boot_flow.md "Bug #2") is ours, applied on top rather than
-# committed into the submodule. Idempotent: skip if already applied.
-if [[ "$SKIP_BL32" -eq 0 ]]; then
-    if git -C "$TFA_DIR" apply --reverse --check "$TFA_PATCH" 2>/dev/null; then
-        echo "→ TF-A qemu_sbsa xlat-tables patch already applied"
-    else
-        echo "→ Applying TF-A qemu_sbsa xlat-tables patch..."
-        git -C "$TFA_DIR" apply "$TFA_PATCH"
-    fi
-fi
 
 if [[ "$SKIP_BL32" -eq 0 ]]; then
     # ---------- stage 1: StandaloneMm (BL32) -----------------------------------
