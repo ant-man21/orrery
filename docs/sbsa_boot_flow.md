@@ -413,77 +413,105 @@ time, unlike `SBSA_FLASH1.fd` which is skipped once it exists).
 
 ## Debugging this yourself
 
-`qemu.sh -g` starts QEMU paused with a gdbstub on `:1234` (`-S -s`), CPU0
-halted at the reset vector (BL1, address 0). Attach with:
+See `docs/gdb_debugging_guide.md` — a standalone, verified-against-this-
+repo's-current-boot-chain guide to attaching gdb to any of the three
+platforms, with SBSA's multi-stage (BL1→BL2→BL31→BL32→BL33) symbol
+handoff covered in full, plus what a healthy boot looks like at each
+stage and a troubleshooting section. Written as a how-to, not a
+postmortem — this section of this doc used to duplicate it inline while
+the bugs above were still being chased; that content now lives there
+instead, kept current independently of this doc's own bug-by-bug history.
 
-```sh
-gdb-multiarch -ex 'target remote :1234'
+## MM_COMMUNICATE: BL33 talking to BL32, for real
+
+BL32 boots cleanly end to end (bugs #1-#4 above); this section is about the
+next piece — BL33 actually *using* it. `SbsaOrreryPkg.dsc` (by way of its
+own fork of `SbsaQemu.dsc`, see below) now supports a build-time
+`ENABLE_STMM` flag that swaps `VariableRuntimeDxe.inf` +
+`FaultTolerantWriteDxe.inf` (talking to non-secure flash directly) for
+`VariableSmmRuntimeDxe.inf` + `ArmPkg/Drivers/MmCommunicationDxe/MmCommunication.inf`
+(the SMC-based MM-communication protocol producer) — matching what's
+already built for BL32: `VariableStandaloneMm.inf` +
+`FaultTolerantWriteStandaloneMm.inf` + `NorFlashStandaloneMm.inf`. `build.sh`
+sets `-D ENABLE_STMM=TRUE` automatically whenever BL32 is included (i.e.
+whenever `-M` isn't passed).
+
+**Confirmed working**: a `GetVariable()`/boot-variable read from BL33 issues
+an `MM_COMMUNICATE_AARCH64` SMC; TF-A's `spm_mm_main.c` routes it into BL32;
+`VariableStandaloneMm` services it against the secure NOR region at
+`0x0100_0000`; the result comes back over the same SMC. Verified by
+capturing StandaloneMm's own secure console (`qemu.sh -d --
+-serial file:/tmp/uart1.log -serial file:/tmp/uart2.log` — UART2 is the
+third `-serial`, see "Debugging this yourself" above) and watching real,
+distinctly-sized `Received delegated event` entries land during boot, with
+BL33 reaching the full UEFI Boot Manager front page (which itself requires
+working variable services to render — it reads `PlatformLang` and friends
+to build that screen). That's the actual point of "StMm in BL32" on a
+server BIOS: UEFI variables (including Secure Boot's PK/KEK/db) live behind
+a boundary the non-secure OS can never reach directly, no matter how
+compromised BL33/the OS gets.
+
+This platform's fork of `SbsaQemu.dsc`/`SbsaQemu.fdf`
+(`ant-man21/edk2-platforms`, branch `orrery`) now diverges from upstream
+specifically to add this — see that fork's `orrery` branch history for the
+exact diff, since upstream `SbsaQemu` has no `ENABLE_STMM` story at all.
+
+### Bug #5: the NS comm buffer isn't a fixed address here, unlike Juno
+
+Juno's `ArmJuno.dsc` hardcodes `PcdMmBufferBase`/`PcdMmBufferSize` to a
+fixed hardware SRAM address (`0xFEF00000`) — real silicon, fixed memory
+map, done. `qemu_sbsa`'s TF-A computes this address at **runtime** instead,
+as `(top of DRAM reported by the "/memory" DT node) - PLAT_QEMU_SP_IMAGE_NS_BUF_SIZE`
+(`plat/qemu/common/qemu_spm.c`'s `dt_add_ns_buf_node()`) — confirmed
+empirically: `-m 1024` puts it at `0x1003fe00000`, `-m 2048` moves it to
+`0x1007fe00000`. Since `PcdMmBufferBase`/`Size` are `FixedAtBuild` PCDs
+(baked in at BL33 *build* time), they're only correct for one specific
+`-m` value — `SbsaOrreryPkg/qemu.sh`'s default of `-m 1024`. `qemu.sh` warns
+if launched with a different `-m`; changing the default requires
+recomputing and updating the PCD in `SbsaQemu.dsc`, not just adjusting a
+flag.
+
+### Bug #6: TF-A reserves the buffer; edk2 never got the memo
+
+With the address right, `ArmMmCommunication.efi` still asserted:
+
+```
+MmCommunication2Initialize: Existing GCD memory space does not completely cover MM-NS Buffer Memory Space
+ASSERT [ArmMmCommunication] MmCommunication.c(749)
 ```
 
-The awkward part of debugging a multi-stage boot like this: **every stage
-is a different ELF, loaded at a different time, at a different address**,
-and gdb has no idea which one you're stopped in. You have to tell it, and
-re-tell it every time execution moves to the next stage:
+TF-A *does* mark the NS buffer reserved in the device tree it hands off
+(`fdt_add_reserved_memory(fdt, "ns-buf-spm-mm", ...)` — the same function
+that computes the address above) — but `SbsaQemu`'s PEI-phase memory init
+(`Silicon/Qemu/SbsaQemu/Library/SbsaQemuLib`) never parses
+`/reserved-memory` DT nodes at all; it treats the *entire* `/memory` node,
+TF-A's reservation included, as one ordinary "System Memory" resource HOB.
+By the time `MmCommunication2Initialize()` runs — fairly late in DXE
+dispatch — ordinary allocations have already fragmented that region, so no
+single GCD descriptor cleanly covers the buffer anymore.
 
-```gdb
-# BL1 — runs from reset, no separate .elf needed (it's tiny, disassemble
-# straight from memory), or:
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl1/bl1.elf 0x0
-break *0x0
-continue
+**Fix**: `SbsaQemuLib`'s memory constructor (`SbsaQemuMem.c`) now excludes
+`PcdMmBufferSize` bytes from `PcdSystemMemorySize` when `ENABLE_STMM` is
+set — keeping the region out of the "System Memory" resource HOB entirely,
+so `ArmMmCommunication`'s own `GetMemorySpaceDescriptor()` call finds
+*nothing* there (`EfiGcdMemoryTypeNonExistent`) and takes its own
+already-correct fallback path: adding it itself as
+`EfiGcdMemoryTypeReserved`. A matching entry added to
+`ArmPlatformGetVirtualMemoryMap()`'s table keeps the region mapped and
+cacheable for the CPU regardless — only the *resource HOB* accounting
+changes, not the MMU's actual page tables.
 
-# BL2 — loaded by BL1 at a dynamic address; check the "Loading image id=1
-# at address 0x..." line in the serial log for where, then:
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl2/bl2.elf 0x3fbd1000
-break bl2_entrypoint
-continue
+### A process trap worth naming: `build.sh` doesn't always rebuild what you think it does
 
-# BL31 — same idea, address from "Loading image id=3 at address 0x...":
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl31/bl31.elf 0x3fbee000
-break bl31_main
-continue
-
-# BL32/StandaloneMm — loaded at the fixed PLAT_QEMU_SP_IMAGE_BASE
-# (0x20008000), matches "Loading image id=4 at address 0x...":
-add-symbol-file Build/SbsaOrreryStandaloneMm/DEBUG_GCC/AARCH64/StandaloneMmPkg/Core/StandaloneMmCore/DEBUG/StandaloneMmCore.dll 0x20008000
-break ArmStandaloneMmCoreEntryPoint  # or ValidateSpmMmBootInfo, spm_mm_main.c:124, etc.
-continue
-
-# BL33 — GenFds-decompressed load address varies per build; the DEBUG
-# build's own serial log prints "add-symbol-file <path> 0x<addr>" for
-# every driver as it loads (see the boot log excerpts above) — paste
-# those lines straight into gdb as they scroll past.
-```
-
-`ArmPkg/Drivers/CpuPei/CpuPei.inf` and friends print those `add-symbol-file`
-lines automatically in DEBUG builds specifically so you can do this — it's
-not a trick, it's the intended workflow for source-level UEFI debugging on
-ARM.
-
-Serial consoles, by design: BL1/BL2/BL31 share one non-secure console
-(`UART0`, `-serial stdio` — the only one `qemu.sh` wires up today). BL31's
-own crash console is `UART1`; StMm's console is `UART2`, per
-`SbsaOrreryStandaloneMm.dsc`'s `PcdSerialRegisterBase`. Add
-`-serial file:secure.log` (or a second `-serial mon:stdio`) to `qemu.sh`'s
-extra-args (`-- -serial file:secure.log`) to see StMm's own prints
-separately.
-
-## What a working MM_COMMUNICATE round trip would look like
-
-BL32 now boots cleanly end to end (bugs #1-#4 above), but BL33 and BL32
-still don't actually talk to each other yet — `SbsaOrreryPkg.dsc` still
-uses stock `VariableRuntimeDxe` talking directly to non-secure flash, same
-as before StandaloneMm was wired in at all. The plan is to swap BL33's
-variable stack for the MM-communicating one — `VariableSmmRuntimeDxe` +
-`MmCommunicationDxe` (ArmPkg's SMC-based one) in place of
-`VariableRuntimeDxe`, matching what's already built for BL32:
-`VariableStandaloneMm.inf` + `FaultTolerantWriteStandaloneMm.inf` +
-`NorFlashStandaloneMm.inf` (all three already in
-`SbsaOrreryStandaloneMm.fdf`). A `GetVariable()` call from BL33 would then
-issue an `MM_COMMUNICATE_AARCH64` SMC, TF-A's `spm_mm_main.c` would route it
-into BL32 via `mm_communicate()`, StandaloneMm's own `VariableStandaloneMm`
-driver would read/write the secure NOR region at `0x0100_0000`, and the
-result comes back over the same SMC. That's the real point of "StMm in
-BL32" on server BIOS: UEFI variables (including Secure Boot's PK/KEK/db)
-live behind a boundary the non-secure OS can never reach directly, no
-matter how compromised BL33/the OS gets.
+While chasing bug #6, the exact same assert kept reproducing identically
+across several supposedly-different fix attempts — because `build.sh`
+seeds `vars/SBSA_FLASH1_*.fd` (where BL33 lives) **only once**, deliberately,
+to preserve variables a previous boot persisted (see the flash-layout
+section above). Every rebuild produced a fresh, correctly-fixed BL33 image
+in `Build/SbsaQemu/.../FV/SBSA_FLASH1.fd` — but `qemu.sh` kept booting the
+*old* copy in `vars/`, since nothing ever re-seeded it. Symptom: a code fix
+that appears to do nothing, with identical output down to the byte, no
+matter how the source changes. `build.sh -F` now forces a fresh reseed;
+reach for it whenever iterating on BL33-side source (this package, or
+anything it depends on upstream of BL33 like `edk2-platforms`), not just
+after a bug that "should be fixed" keeps reappearing unchanged.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # build.sh — firmware builder for SbsaOrreryPkg (QEMU sbsa-ref, AArch64)
-# Usage: ./build.sh [-r|-d] [-C] [-M] [-s|-S]
+# Usage: ./build.sh [-r|-d] [-C] [-M] [-s|-S] [-F]
 #
 #   -r          Release build         (default; applies to BL33 + StandaloneMm)
 #   -d          Debug build           (BL33 prints boot progress over -serial;
@@ -17,6 +17,17 @@
 #               reach BL33 today).
 #   -s          Sync .efi outputs -> shared/apps/ + shared.img after build (default: on)
 #   -S          Skip sync
+#   -F          Force-refresh vars/SBSA_FLASH1_*.fd from this build's fresh
+#               BL33 output, discarding whatever's there now (normally only
+#               seeded once — see the padding section below — to preserve
+#               variables a previous boot persisted). Without this, a stale
+#               FLASH1 silently keeps booting OLD BL33 code no matter how
+#               many times you rebuild: qemu.sh has no way to tell it's
+#               stale, and every symptom looks identical to your last test
+#               run. Pass this whenever iterating on BL33 source changes
+#               (SbsaOrreryPkg.dsc, its libraries, or anything upstream of
+#               it like edk2-platforms' SbsaQemu.dsc/.fdf) — real, hours-lost
+#               experience, not theoretical.
 #   -h          Show this help
 #
 # Unlike ArmVirtOrreryPkg/Q35Pkg, this platform's early boot isn't edk2 at
@@ -67,13 +78,14 @@ BUILD_TYPE="RELEASE"
 CLEAN=0
 SKIP_BL32=0
 SYNC=1
+FORCE_FLASH1=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
     sed -n '/^# Usage/,/^# ====/p' "$0" | grep -v '^# ===='
     exit 0
 }
-while getopts ":rdCMsSh" opt; do
+while getopts ":rdCMsSFh" opt; do
     case $opt in
         r) BUILD_TYPE="RELEASE" ;;
         d) BUILD_TYPE="DEBUG"   ;;
@@ -81,6 +93,7 @@ while getopts ":rdCMsSh" opt; do
         M) SKIP_BL32=1          ;;
         s) SYNC=1               ;;
         S) SYNC=0               ;;
+        F) FORCE_FLASH1=1       ;;
         h) usage ;;
         :) echo "ERROR: -$OPTARG requires an argument." >&2; exit 1 ;;
        \?) echo "ERROR: Unknown flag -$OPTARG" >&2; exit 1 ;;
@@ -211,8 +224,16 @@ fi
 # ---------- stage 4: BL33 (SbsaOrreryPkg UEFI) + final flash images -----------
 echo ""
 echo "→ [4/4] Building BL33 (SbsaOrreryPkg.dsc) and composing flash images..."
+# ENABLE_STMM routes BL33's variable store through MM_COMMUNICATE into
+# StandaloneMm (BL32) instead of non-secure flash directly — only valid
+# when BL32 is actually present to answer it (see SbsaQemu.dsc's own
+# comment on the flag). Must track $SKIP_BL32, not just default off.
+STMM_BUILD_FLAG=()
+if [[ "$SKIP_BL32" -eq 0 ]]; then
+    STMM_BUILD_FLAG=(-D ENABLE_STMM=TRUE)
+fi
 build -a "$ARCH" -t "$TOOLCHAIN" -b "$EDK2_BUILD_TARGET" -p "$DSC" -n "$(nproc)" \
-    -D TPM2_ENABLE=TRUE
+    -D TPM2_ENABLE=TRUE "${STMM_BUILD_FLAG[@]}"
 
 FV_DIR="$REPO_ROOT/$OUTPUT_DIR/${EDK2_BUILD_TARGET}_${TOOLCHAIN}/FV"
 echo ""
@@ -270,10 +291,13 @@ rm -f "$OLD_VARSTORE"
 # FLASH1 holds BL33 code *and* the non-secure NV variable store —
 # persistent across runs, like Q35's OVMF_VARS.fd / ArmVirt's
 # QEMU_VARS.fd. Only seed it if missing so provisioned variables survive a
-# rebuild.
+# rebuild — which also means a plain rebuild during BL33 development
+# silently keeps booting OLD code forever unless you pass -F or delete
+# vars/SBSA_FLASH1_*.fd yourself. Ask why the exact same bug seems to keep
+# reproducing after a "fix" before you doubt the fix itself.
 FLASH1_PADDED="$VARS_DIR/SBSA_FLASH1_${BUILD_TYPE}.fd"
-if [[ ! -f "$FLASH1_PADDED" ]]; then
-    echo "→ Seeding fresh FLASH1 (vars) image"
+if [[ ! -f "$FLASH1_PADDED" || "$FORCE_FLASH1" -eq 1 ]]; then
+    echo "→ Seeding fresh FLASH1 (vars) image$([[ "$FORCE_FLASH1" -eq 1 ]] && echo " (forced, -F)")"
     cp "$FV_DIR/SBSA_FLASH1.fd" "$FLASH1_PADDED"
     truncate -s "$FLASH_SIZE" "$FLASH1_PADDED"
 fi

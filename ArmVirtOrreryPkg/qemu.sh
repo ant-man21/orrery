@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with ArmVirt firmware (QEMU 'virt' machine, AArch64)
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
 #   -m MEM          RAM in MB                   (default: 512)
+#   -g              Start paused with a gdbstub on :1234 (qemu -S -s) —
+#                    attach with `gdb-multiarch -ex 'target remote :1234'`
+#                    (AArch64 target — plain `gdb` on an x86 host won't
+#                    work). Symbols:
+#                    Build/ArmVirtQemu-AArch64/<BUILD_TYPE>_GCC/AARCH64/**/DEBUG/*.dll,
+#                    or paste the `add-symbol-file <path> 0x<addr>` lines
+#                    a DEBUG build prints for each driver as it loads.
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
 #
@@ -61,6 +68,7 @@ fi
 BUILD_TYPE="RELEASE"
 MEM_MB=512
 RESET_SHARED=0
+GDB=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -73,6 +81,7 @@ while [[ $# -gt 0 ]]; do
         -r)             BUILD_TYPE="RELEASE"; shift ;;
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
+        -g)             GDB=1;                shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
@@ -200,6 +209,11 @@ echo "  CODE fd   : $CODE_FD_PADDED"
 echo "  VARS fd   : $VARS_FD  (persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
 echo "  Host dir  : $SHARED_DIR"
+GDB_ARGS=()
+if [[ "$GDB" -eq 1 ]]; then
+    GDB_ARGS=(-s -S)
+    echo "  gdbstub   : :1234 (paused at reset — attach before it'll boot)"
+fi
 echo "============================================================"
 echo ""
 
@@ -225,4 +239,5 @@ echo ""
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-tis-device,tpmdev=tpm0 \
     \
+    "${GDB_ARGS[@]}" \
     "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
