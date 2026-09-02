@@ -413,60 +413,14 @@ time, unlike `SBSA_FLASH1.fd` which is skipped once it exists).
 
 ## Debugging this yourself
 
-`qemu.sh -g` starts QEMU paused with a gdbstub on `:1234` (`-S -s`), CPU0
-halted at the reset vector (BL1, address 0). Attach with:
-
-```sh
-gdb-multiarch -ex 'target remote :1234'
-```
-
-The awkward part of debugging a multi-stage boot like this: **every stage
-is a different ELF, loaded at a different time, at a different address**,
-and gdb has no idea which one you're stopped in. You have to tell it, and
-re-tell it every time execution moves to the next stage:
-
-```gdb
-# BL1 — runs from reset, no separate .elf needed (it's tiny, disassemble
-# straight from memory), or:
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl1/bl1.elf 0x0
-break *0x0
-continue
-
-# BL2 — loaded by BL1 at a dynamic address; check the "Loading image id=1
-# at address 0x..." line in the serial log for where, then:
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl2/bl2.elf 0x3fbd1000
-break bl2_entrypoint
-continue
-
-# BL31 — same idea, address from "Loading image id=3 at address 0x...":
-add-symbol-file trusted-firmware-a/build/qemu_sbsa/debug/bl31/bl31.elf 0x3fbee000
-break bl31_main
-continue
-
-# BL32/StandaloneMm — loaded at the fixed PLAT_QEMU_SP_IMAGE_BASE
-# (0x20008000), matches "Loading image id=4 at address 0x...":
-add-symbol-file Build/SbsaOrreryStandaloneMm/DEBUG_GCC/AARCH64/StandaloneMmPkg/Core/StandaloneMmCore/DEBUG/StandaloneMmCore.dll 0x20008000
-break ArmStandaloneMmCoreEntryPoint  # or ValidateSpmMmBootInfo, spm_mm_main.c:124, etc.
-continue
-
-# BL33 — GenFds-decompressed load address varies per build; the DEBUG
-# build's own serial log prints "add-symbol-file <path> 0x<addr>" for
-# every driver as it loads (see the boot log excerpts above) — paste
-# those lines straight into gdb as they scroll past.
-```
-
-`ArmPkg/Drivers/CpuPei/CpuPei.inf` and friends print those `add-symbol-file`
-lines automatically in DEBUG builds specifically so you can do this — it's
-not a trick, it's the intended workflow for source-level UEFI debugging on
-ARM.
-
-Serial consoles, by design: BL1/BL2/BL31 share one non-secure console
-(`UART0`, `-serial stdio` — the only one `qemu.sh` wires up today). BL31's
-own crash console is `UART1`; StMm's console is `UART2`, per
-`SbsaOrreryStandaloneMm.dsc`'s `PcdSerialRegisterBase`. Add
-`-serial file:secure.log` (or a second `-serial mon:stdio`) to `qemu.sh`'s
-extra-args (`-- -serial file:secure.log`) to see StMm's own prints
-separately.
+See `docs/gdb_debugging_guide.md` — a standalone, verified-against-this-
+repo's-current-boot-chain guide to attaching gdb to any of the three
+platforms, with SBSA's multi-stage (BL1→BL2→BL31→BL32→BL33) symbol
+handoff covered in full, plus what a healthy boot looks like at each
+stage and a troubleshooting section. Written as a how-to, not a
+postmortem — this section of this doc used to duplicate it inline while
+the bugs above were still being chased; that content now lives there
+instead, kept current independently of this doc's own bug-by-bug history.
 
 ## MM_COMMUNICATE: BL33 talking to BL32, for real
 
