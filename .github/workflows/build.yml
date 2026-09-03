@@ -2,14 +2,18 @@ name: Build
 
 # Compiles each platform and uploads exactly what its qemu.sh needs to
 # boot -- not the full Build/ object tree -- as a per-platform artifact.
-# This is the only place firmware gets built. boot_test.yml is a separate
-# workflow that triggers once this one finishes and consumes these
-# artifacts rather than rebuilding (see issue #34) -- if build.yml were
-# also invoked *from* boot_test.yml (e.g. as a reusable workflow), every
-# push would build twice: once here, once nested inside the other run.
-# workflow_run (on boot_test.yml's side) is what avoids that while still
-# keeping these as two independently-triggered, independently-visible
-# workflows rather than one calling the other.
+# This is the only place firmware gets built. boot_test.yml triggers on
+# these same events and consumes these artifacts rather than rebuilding
+# (see issue #34) -- it polls for this workflow's matching run itself
+# (by head SHA) rather than being invoked from here, so every push still
+# builds firmware exactly once, not twice.
+
+# github.event.pull_request.title (a pull_request run's default display
+# title) doesn't change between commits, so every run on a PR otherwise
+# shows the same title regardless of which push triggered it. Tie it to
+# the run number instead, which is unique per run.
+run-name: >-
+  ${{ github.workflow }} #${{ github.run_number }} on ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.number) || github.ref_name }}
 
 on:
   push:
