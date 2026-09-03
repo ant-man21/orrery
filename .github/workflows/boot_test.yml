@@ -1,0 +1,97 @@
+name: Boot Tests
+
+# Triggers once the Build workflow finishes and consumes *its* artifacts
+# (actions/download-artifact with run-id) rather than rebuilding firmware --
+# see issue #34 on why re-invoking build.yml from here (e.g. as a reusable
+# workflow) would build everything twice per push instead of once.
+#
+# Runs tests/test_boot.py: boots each platform headless and checks real
+# boot-phase markers (SEC/DXE/BDS, or TF-A's BL1->BL32->BL33 chain for
+# SBSA), and for Q35 drives a full TPM provision-and-lock cycle through a
+# generated startup.nsh. This is the tier above Build -- "does it actually
+# boot and behave correctly," not just "does it compile."
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Build workflow run ID to pull firmware artifacts from (required for a manual run -- open that run's URL and copy the id from it)"
+        required: true
+
+jobs:
+  boot:
+    name: Boot + pytest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      # tests/, each platform's qemu.sh, and Q35Pkg/shared/.sync all come
+      # from checkout -- none of it is part of the firmware artifacts,
+      # which are build *output* only. Pin to the exact commit the Build
+      # run actually built, not whatever's newest on the branch right now
+      # (workflow_run defaults to the default branch's tip otherwise,
+      # which can drift from the commit that produced these artifacts).
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 qemu-system-arm \
+            mtools dosfstools swtpm \
+            python3-pip
+          python3 -m pip install pytest
+
+      - name: Resolve build run id
+        id: run_id
+        run: |
+          if [ -n "${{ github.event.inputs.build_run_id }}" ]; then
+            echo "id=${{ github.event.inputs.build_run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download q35 firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-q35
+          path: .
+          run-id: ${{ steps.run_id.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download armvirt firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-armvirt
+          path: .
+          run-id: ${{ steps.run_id.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download sbsa firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-sbsa
+          path: .
+          run-id: ${{ steps.run_id.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run boot pytest suite
+        run: python3 -m pytest -v tests/
+
+      - name: Upload boot logs (always, for debugging failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-debug-logs
+          path: |
+            Q35Pkg/debug.log
+            ArmVirtOrreryPkg/debug.log
+            SbsaOrreryPkg/debug.log
+          if-no-files-found: ignore
+          retention-days: 7

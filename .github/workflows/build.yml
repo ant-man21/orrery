@@ -1,5 +1,16 @@
 name: Build
 
+# Compiles each platform and uploads exactly what its qemu.sh needs to
+# boot -- not the full Build/ object tree -- as a per-platform artifact.
+# This is the only place firmware gets built. boot_test.yml is a separate
+# workflow that triggers once this one finishes and consumes these
+# artifacts rather than rebuilding (see issue #34) -- if build.yml were
+# also invoked *from* boot_test.yml (e.g. as a reusable workflow), every
+# push would build twice: once here, once nested inside the other run.
+# workflow_run (on boot_test.yml's side) is what avoids that while still
+# keeping these as two independently-triggered, independently-visible
+# workflows rather than one calling the other.
+
 on:
   push:
     branches: [main]
@@ -15,13 +26,33 @@ jobs:
         include:
           - name: q35
             script: Q35Pkg/build.sh
-            args: -r -S
+            # -d, not -r: boot_test.yml's pytest suite reads DEBUG-level
+            # trace (Q35's -debugcon, SBSA's DXE dispatch log) for its
+            # phase markers -- see tests/test_boot.py's _pick_build_flag,
+            # which prefers DEBUG when present and skips a test outright
+            # if only RELEASE is built for a platform that needs DEBUG.
+            # No -S here (unlike before): shared.img needs TpmProvisionApp
+            # synced in, or test_q35_tpm_provision_and_lock skips instead
+            # of actually running in CI.
+            args: -d
+            artifact_paths: |
+              Build/OvmfX64
+              Q35Pkg/shared.img
+              Q35Pkg/uefi-shell.img
+              Q35Pkg/shared
           - name: arm-virt
             script: ArmVirtOrreryPkg/build.sh
-            args: -r
+            args: -d
+            artifact_paths: |
+              Build/ArmVirtQemu-AArch64
+              ArmVirtOrreryPkg/shared.img
+              ArmVirtOrreryPkg/uefi-shell.img
           - name: sbsa
             script: SbsaOrreryPkg/build.sh
-            args: -r -S
+            args: -d -S
+            artifact_paths: |
+              SbsaOrreryPkg/vars
+              SbsaOrreryPkg/shared.img
     steps:
       - name: Checkout orrery
         uses: actions/checkout@v4
@@ -63,10 +94,27 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential uuid-dev iasl nasm python3 \
             gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu \
+            libssl-dev \
             mtools
+          # libssl-dev: trusted-firmware-a's fiptool (SBSA's BL2/BL31/BL32
+          # -> FIP packaging step) needs openssl/sha.h to compute image
+          # hashes. Without it, SBSA's build fails partway through with
+          # "fatal error: openssl/sha.h: No such file or directory" --
+          # confirmed by hitting this exact failure locally; the runtime
+          # libssl3 package alone isn't enough, the -dev headers are needed
+          # at build time even though nothing here links against OpenSSL
+          # directly for BL33 itself.
 
       - name: Build BaseTools
         run: make -C edk2/BaseTools -j"$(nproc)"
 
       - name: Build firmware (${{ matrix.name }})
         run: ./${{ matrix.script }} ${{ matrix.args }}
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.name }}
+          path: ${{ matrix.artifact_paths }}
+          retention-days: 7
+          if-no-files-found: error
