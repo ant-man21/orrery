@@ -35,6 +35,7 @@ jobs:
             # synced in, or test_q35_tpm_provision_and_lock skips instead
             # of actually running in CI.
             args: -d
+            sync_list: TpmProvisionApp.efi
             artifact_paths: |
               Build/OvmfX64
               Q35Pkg/shared.img
@@ -43,6 +44,7 @@ jobs:
           - name: arm-virt
             script: ArmVirtOrreryPkg/build.sh
             args: -d
+            sync_list: TpmProvisionApp.efi
             artifact_paths: |
               Build/ArmVirtQemu-AArch64
               ArmVirtOrreryPkg/shared.img
@@ -50,9 +52,22 @@ jobs:
           - name: sbsa
             script: SbsaOrreryPkg/build.sh
             args: -d -S
+            sync_list: ""
+            # pytest.ini here is NOT something the boot job needs from this
+            # artifact (it's already in the repo via checkout) -- it's a
+            # workaround for actions/upload-artifact computing the common
+            # ancestor of all listed paths and stripping it. With only
+            # SbsaOrreryPkg/vars + SbsaOrreryPkg/shared.img listed, that
+            # ancestor is SbsaOrreryPkg/ itself, so the extracted files
+            # would land at vars/... instead of SbsaOrreryPkg/vars/... --
+            # confirmed directly by inspecting a failing run's artifact
+            # zip. Including a repo-root file forces the ancestor back to
+            # the repo root, same as Q35/arm-virt already get for free
+            # from also listing a Build/... path.
             artifact_paths: |
               SbsaOrreryPkg/vars
               SbsaOrreryPkg/shared.img
+              pytest.ini
     steps:
       - name: Checkout orrery
         uses: actions/checkout@v4
@@ -107,6 +122,35 @@ jobs:
 
       - name: Build BaseTools
         run: make -C edk2/BaseTools -j"$(nproc)"
+
+      # <Platform>/shared/.sync is what controls which built .efi apps
+      # build.sh copies into shared/apps/ and bakes into shared.img -- it's
+      # gitignored (shared/ is local dev/test state, not repo content), so
+      # a fresh CI checkout has none. Write it here rather than committing
+      # it: this is CI's own declared test requirement (it needs
+      # TpmProvisionApp.efi synced in for test_q35_tpm_provision_and_lock),
+      # not something that belongs in a developer's local shared/ folder.
+      - name: Configure shared.img sync list (CI-only, not committed)
+        if: matrix.sync_list != ''
+        run: |
+          mkdir -p "$(dirname '${{ matrix.script }}')/shared"
+          echo "${{ matrix.sync_list }}" > "$(dirname '${{ matrix.script }}')/shared/.sync"
+
+      # The real update-signing private key (tools/keys/) is a genuine
+      # secret and never touches this repo or CI -- see .gitignore's own
+      # comment on it. TrustedUpdateKey.h (the *public* half, compiled
+      # into firmware) IS committed, but with no matching private key
+      # around, build.sh can't produce a rom.ticket that verifies against
+      # it -- it just skips signing with a warning (not a build failure),
+      # so this was silently never happening in CI before. Generate a
+      # fresh, CI-only throwaway keypair instead: overwrites the checked-
+      # out TrustedUpdateKey.h in this ephemeral runner only (never
+      # committed, discarded when it terminates), and build.sh then signs
+      # the ROM it just built against that same keypair -- self-
+      # consistent, and the real key is never exposed to CI.
+      - name: Generate a CI-only signing keypair (never the real one)
+        if: matrix.sync_list != ''
+        run: python3 tools/generate_signing_key.py
 
       - name: Build firmware (${{ matrix.name }})
         run: ./${{ matrix.script }} ${{ matrix.args }}
