@@ -20,11 +20,21 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _pick_build_flag(fv_file_template: str) -> str | None:
-    """fv_file_template has one '{bt}' placeholder for DEBUG_GCC/RELEASE_GCC.
-    Returns the qemu.sh flag (-d/-r) for whichever build exists, preferring
-    DEBUG (richer trace output) if both do. None if neither is built."""
-    for build_dir, flag in (("DEBUG_GCC", "-d"), ("RELEASE_GCC", "-r")):
+def _pick_build_flag(
+    fv_file_template: str,
+    build_dir_names: tuple[str, str] = ("DEBUG_GCC", "RELEASE_GCC"),
+) -> str | None:
+    """fv_file_template has one '{bt}' placeholder for the DEBUG/RELEASE
+    build-dir name -- most platforms use edk2's own "<BUILD_TYPE>_<TOOLCHAIN>"
+    convention (DEBUG_GCC/RELEASE_GCC, the default), but SBSA's padded vars/
+    images use plain "DEBUG"/"RELEASE" instead (see build.sh's own
+    FLASH0_PADDED/FLASH1_PADDED naming) -- pass build_dir_names=("DEBUG",
+    "RELEASE") for those. Returns the qemu.sh flag (-d/-r) for whichever
+    build exists, preferring DEBUG (richer trace output) if both do. None
+    if neither is built.
+    """
+    debug_dir, release_dir = build_dir_names
+    for build_dir, flag in ((debug_dir, "-d"), (release_dir, "-r")):
         if (REPO_ROOT / fv_file_template.format(bt=build_dir)).exists():
             return flag
     return None
@@ -327,7 +337,15 @@ def test_q35_tpm_provision_and_lock():
 
 def test_sbsa_boots():
     platform_dir = REPO_ROOT / "SbsaOrreryPkg"
-    flag = _pick_build_flag("Build/SbsaQemu/{bt}/FV/SBSA_FLASH0.fd")
+    # Checks the padded vars/ image qemu.sh itself requires, not
+    # Build/SbsaQemu -- the latter is an intermediate build.sh doesn't
+    # need to ship (and CI's firmware-sbsa artifact deliberately excludes
+    # it), so checking for it here made this test skip unconditionally
+    # even when SBSA was, in fact, built.
+    flag = _pick_build_flag(
+        "SbsaOrreryPkg/vars/SBSA_FLASH0_{bt}.fd",
+        build_dir_names=("DEBUG", "RELEASE"),
+    )
     if flag is None:
         pytest.skip("SBSA firmware not built -- run SbsaOrreryPkg/build.sh first")
 
