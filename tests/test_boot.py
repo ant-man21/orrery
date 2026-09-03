@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+import conftest  # tests/ has no __init__.py, so this is the sibling module
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -104,7 +106,11 @@ def _boot_and_capture(
     return debug_log.read_text(errors="replace") if debug_log.exists() else ""
 
 
-def _assert_markers(log: str, markers: list[str], platform: str) -> None:
+def _assert_markers(log: str, markers: list[str], platform: str, log_path: Path) -> None:
+    # Record what was found before asserting -- so a failing test still
+    # shows up in the job summary with its actual (partial) evidence,
+    # not just as a missing row.
+    conftest.record_evidence(platform, log_path, markers, log)
     missing = [m for m in markers if m not in log]
     if missing:
         tail = "\n".join(log.splitlines()[-40:])
@@ -145,6 +151,7 @@ def test_q35_boots():
             "[BdsDxe] Locate Variable Policy protocol - Success",
         ],
         "Q35",
+        platform_dir / "debug.log",
     )
 
 
@@ -171,6 +178,7 @@ def test_armvirt_boots():
             "Shell>",
         ],
         "ArmVirt",
+        platform_dir / "debug.log",
     )
 
 
@@ -328,6 +336,19 @@ def test_q35_tpm_provision_and_lock():
         startup_nsh.unlink(missing_ok=True)
         (platform_dir / "shared.img").unlink(missing_ok=True)
 
+    # Unlike the plain boot tests, this transcript only ever exists in the
+    # pipe buffer above -- it's driven over stdin/stdout, not -debugcon, so
+    # nothing writes it to disk on its own. Save it so it uploads alongside
+    # the others and shows up in the job summary.
+    tpm_log_path = platform_dir / "tpm_provision.log"
+    tpm_log_path.write_text(log)
+    conftest.record_evidence(
+        "Q35 TPM Provision",
+        tpm_log_path,
+        ["SENTINEL: PROVISION_PASS", "Secret written to NV index", "write-locked"],
+        log,
+    )
+
     if "SENTINEL: PROVISION_PASS" not in log:
         tail = "\n".join(log.splitlines()[-40:])
         pytest.fail(f"TPM provision+lock did not report PASS\n--- last 40 lines ---\n{tail}")
@@ -365,4 +386,5 @@ def test_sbsa_boots():
             "Boot0001: UEFI Shell",
         ],
         "SBSA",
+        platform_dir / "debug.log",
     )

@@ -131,6 +131,7 @@ jobs:
           name: boot-debug-logs
           path: |
             Q35Pkg/debug.log
+            Q35Pkg/tpm_provision.log
             ArmVirtOrreryPkg/debug.log
             SbsaOrreryPkg/debug.log
           if-no-files-found: ignore
