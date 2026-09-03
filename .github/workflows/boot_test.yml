@@ -1,43 +1,47 @@
 name: Boot Tests
 
-# Triggers once the Build workflow finishes and consumes *its* artifacts
-# (actions/download-artifact with run-id) rather than rebuilding firmware --
-# see issue #34 on why re-invoking build.yml from here (e.g. as a reusable
-# workflow) would build everything twice per push instead of once.
+# Directly triggered on the same events as Build (pull_request, push to
+# main) -- deliberately NOT workflow_run. workflow_run only fires for
+# listener workflows that already exist on the default branch, and even
+# once merged it's a separate, indirectly-chained event: it's easy for a
+# PR to merge without anyone having actually seen whether this ran, or for
+# the trigger relationship to silently fail to fire at all. Triggering
+# directly means this always shows up as its own check on every PR and
+# every push to main -- checkable, not assumable, and usable as a required
+# branch-protection check like any other.
+#
+# The tradeoff: without a workflow_run event, there's no run id handed to
+# us for the matching Build run, so the job below looks it up itself (by
+# head SHA, via the GitHub API) and waits for it to finish -- still zero
+# rebuilding, just found a different way to avoid it. See issue #34 on why
+# rebuilding here instead of consuming Build's artifacts is the thing to
+# avoid.
 #
 # Runs tests/test_boot.py: boots each platform headless and checks real
 # boot-phase markers (SEC/DXE/BDS, or TF-A's BL1->BL32->BL33 chain for
 # SBSA), and for Q35 drives a full TPM provision-and-lock cycle through a
-# generated startup.nsh. This is the tier above Build -- "does it actually
-# boot and behave correctly," not just "does it compile."
+# generated startup.nsh.
 
 on:
-  workflow_run:
-    workflows: ["Build"]
-    types: [completed]
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: "Build workflow run ID to pull firmware artifacts from (required for a manual run -- open that run's URL and copy the id from it)"
-        required: true
+        description: "Build run ID to pull firmware artifacts from (optional -- leave blank to auto-find the run for this commit)"
+        required: false
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   boot:
     name: Boot + pytest
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
-      # tests/, each platform's qemu.sh, and Q35Pkg/shared/.sync all come
-      # from checkout -- none of it is part of the firmware artifacts,
-      # which are build *output* only. Pin to the exact commit the Build
-      # run actually built, not whatever's newest on the branch right now
-      # (workflow_run defaults to the default branch's tip otherwise,
-      # which can drift from the commit that produced these artifacts).
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Install runtime dependencies
         run: |
@@ -48,38 +52,74 @@ jobs:
             python3-pip
           python3 -m pip install pytest
 
-      - name: Resolve build run id
-        id: run_id
+      # Poll rather than assume Build has already finished: this workflow
+      # and Build both fire off the same push/PR event, effectively
+      # simultaneously, so Build's run for this exact commit may not exist
+      # yet the moment this job starts. Distinguishes "not finished yet"
+      # (keep polling) from "finished but failed" (stop and fail loudly --
+      # don't boot-test a build that didn't succeed) from "never showed up"
+      # (timeout and fail loudly, not hang forever).
+      - name: Find and wait for the matching Build run
+        id: find_build
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           if [ -n "${{ github.event.inputs.build_run_id }}" ]; then
             echo "id=${{ github.event.inputs.build_run_id }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "Looking for a Build run at $SHA ..."
+
+          for i in $(seq 1 60); do  # ~20 min at 20s/poll -- Build's slowest leg (SBSA -d) is the bound
+            RUN_JSON=$(gh run list --repo "${{ github.repository }}" --workflow=build.yml \
+              --json databaseId,headSha,status,conclusion --limit 50 \
+              --jq "[.[] | select(.headSha==\"$SHA\")] | first(.[] | select(.status==\"completed\")) // empty")
+
+            if [ -n "$RUN_JSON" ]; then
+              CONCLUSION=$(echo "$RUN_JSON" | jq -r .conclusion)
+              RUN_ID=$(echo "$RUN_JSON" | jq -r .databaseId)
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "Build run $RUN_ID succeeded"
+                echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+                exit 0
+              else
+                echo "::error::Build run $RUN_ID for $SHA finished with conclusion '$CONCLUSION' -- not running boot tests against it"
+                exit 1
+              fi
+            fi
+
+            sleep 20
+          done
+
+          echo "::error::No completed Build run found for $SHA after ~20 minutes"
+          exit 1
 
       - name: Download q35 firmware
         uses: actions/download-artifact@v4
         with:
           name: firmware-q35
           path: .
-          run-id: ${{ steps.run_id.outputs.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_build.outputs.id }}
+          github-token: ${{ github.token }}
 
       - name: Download armvirt firmware
         uses: actions/download-artifact@v4
         with:
           name: firmware-armvirt
           path: .
-          run-id: ${{ steps.run_id.outputs.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_build.outputs.id }}
+          github-token: ${{ github.token }}
 
       - name: Download sbsa firmware
         uses: actions/download-artifact@v4
         with:
           name: firmware-sbsa
           path: .
-          run-id: ${{ steps.run_id.outputs.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_build.outputs.id }}
+          github-token: ${{ github.token }}
 
       - name: Run boot pytest suite
         run: python3 -m pytest -v tests/
