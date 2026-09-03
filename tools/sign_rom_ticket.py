@@ -87,15 +87,15 @@ def compute_a_hash(rom_bytes: bytes) -> tuple[bytes, bytes, bytes, bytes, bytes]
     return inner, pcr_ext, pcrdig, approved, a_hash
 
 
-def sign(a_hash: bytes) -> bytes:
-    if not PRIVATE_KEY.exists():
+def sign(a_hash: bytes, private_key: pathlib.Path = PRIVATE_KEY) -> bytes:
+    if not private_key.exists():
         raise SystemExit(
-            f"{PRIVATE_KEY} not found — run tools/generate_signing_key.py first."
+            f"{private_key} not found — run tools/generate_signing_key.py first."
         )
     result = subprocess.run(
         [
             "openssl", "pkeyutl", "-sign",
-            "-inkey", str(PRIVATE_KEY),
+            "-inkey", str(private_key),
             "-pkeyopt", "digest:sha256",
         ],
         input=a_hash,
@@ -105,10 +105,14 @@ def sign(a_hash: bytes) -> bytes:
     return result.stdout
 
 
-def self_check(a_hash: bytes, signature: bytes) -> None:
+def self_check(
+    a_hash: bytes,
+    signature: bytes,
+    private_key: pathlib.Path = PRIVATE_KEY,
+) -> None:
     """Verify offline before ever letting this ticket near a device."""
     pubkey = subprocess.run(
-        ["openssl", "rsa", "-in", str(PRIVATE_KEY), "-pubout"],
+        ["openssl", "rsa", "-in", str(private_key), "-pubout"],
         capture_output=True, check=True,
     ).stdout
     # openssl pkeyutl needs three separate file inputs (digest, pubkey,
@@ -136,9 +140,15 @@ def self_check(a_hash: bytes, signature: bytes) -> None:
         )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("rom", type=pathlib.Path, help="Path to the ROM image to sign")
+    parser.add_argument(
+        "--key", type=pathlib.Path, default=PRIVATE_KEY,
+        help=f"Private key to sign with (default: {PRIVATE_KEY}). Exists so the "
+             f"test suite can sign with a throwaway key; the normal build flow "
+             f"always uses the default.",
+    )
     parser.add_argument(
         "-o", "--out", type=pathlib.Path, required=True,
         help="Output ticket path — e.g. <chip>/shared/data/rom.ticket. No "
@@ -157,7 +167,7 @@ def main() -> None:
         "--length", type=lambda x: int(x, 0), default=None,
         help="Number of bytes to hash from --offset (default: rest of file).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     full_bytes = args.rom.read_bytes()
     end = None if args.length is None else args.offset + args.length
@@ -169,8 +179,8 @@ def main() -> None:
         )
 
     inner, pcr_ext, pcrdig, approved, a_hash = compute_a_hash(rom_bytes)
-    signature = sign(a_hash)
-    self_check(a_hash, signature)
+    signature = sign(a_hash, args.key)
+    self_check(a_hash, signature, args.key)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(signature)
