@@ -108,7 +108,7 @@ jobs:
       - name: Download armvirt firmware
         uses: actions/download-artifact@v4
         with:
-          name: firmware-armvirt
+          name: firmware-arm-virt
           path: .
           run-id: ${{ steps.find_build.outputs.id }}
           github-token: ${{ github.token }}
