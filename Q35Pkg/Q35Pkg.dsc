@@ -22,6 +22,17 @@
 # Our additions come after so they can use everything OVMF already defined.
 !include OvmfPkg/OvmfPkgX64.dsc
 
+[PcdsFixedAtBuild]
+  # OvmfPkgX64.dsc sets this to 0xFFFFFFFF -- every DEBUG() class enabled,
+  # including DEBUG_POOL (0x10) / DEBUG_PAGE (0x20), which trace every
+  # single AllocatePool/FreePool/ConvertRange/AddRange call. On a DEBUG
+  # build that's 100k+ lines of noise in debug.log with no boot-relevant
+  # signal in it. Use OVMF's own commented-out "reasonable" suggestion
+  # instead: DEBUG_INIT|DEBUG_WARN|DEBUG_LOAD|DEBUG_FS|DEBUG_INFO|DEBUG_ERROR.
+  # SEC:/PEI/DXE driver-load/BdsDxe phase markers all stay; pool/page
+  # tracing goes.
+  gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|0x8000004F
+
 [LibraryClasses.common.UEFI_APPLICATION]
   Tpm2DeviceLib|SecurityPkg/Library/Tpm2DeviceLibTcg2/Tpm2DeviceLibTcg2.inf
   Tpm2PolicyPcrLib|OrreryPkg/Library/Tpm2PolicyPcrLib/Tpm2PolicyPcrLib.inf

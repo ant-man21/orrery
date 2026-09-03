@@ -355,3 +355,22 @@ if [[ "$SYNC" -eq 1 ]]; then
         fi
     fi
 fi
+
+# ---------- final status summary -----------------------------------------------
+BOOT_FLAG="r"
+[[ "$BUILD_TYPE" == "DEBUG" ]] && BOOT_FLAG="d"
+echo ""
+echo "============================================================"
+echo "✓ SBSA build finished"
+echo "  Build type        : $BUILD_TYPE"
+if [[ "$SKIP_BL32" -eq 0 ]]; then
+    echo "  BL32/StandaloneMm : INCLUDED — SPM_MM=1, ENABLE_STMM=TRUE"
+    echo "                      (BL33 UEFI vars routed via MM_COMMUNICATE into"
+    echo "                       StandaloneMm's secure NV store)"
+else
+    echo "  BL32/StandaloneMm : SKIPPED (-M) — plain BL1->BL2->BL31->BL33, no SPM_MM"
+fi
+echo "  FLASH0 (secure)   : $FLASH0_PADDED"
+echo "  FLASH1 (BL33+vars): $FLASH1_PADDED"
+echo "  Boot with         : ./qemu.sh -$BOOT_FLAG  (add -H for a GTK window)"
+echo "============================================================"

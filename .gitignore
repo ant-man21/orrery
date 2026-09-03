@@ -13,8 +13,10 @@ ArmVirtOrreryPkg/tpm/
 ArmVirtOrreryPkg/uefi-shell.img
 ArmVirtOrreryPkg/uefi-shell.iso
 ArmVirtOrreryPkg/shared/
+ArmVirtOrreryPkg/debug.log
 SbsaOrreryPkg/vars/
 SbsaOrreryPkg/shared/
+SbsaOrreryPkg/debug.log
 shared.img
 trusted-firmware-a/build/
 # Update-signing private key — never commit. Only the .pem private key is
@@ -36,3 +38,5 @@ rtos/**/Release/
 .metadata/
 
 *.stl
+
+__pycache__

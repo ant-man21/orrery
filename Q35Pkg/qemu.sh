@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with Q35 firmware
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [-H] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
@@ -13,6 +13,13 @@
 #                    OVMF's own DEBUG-build serial log prints
 #                    `add-symbol-file <path> 0x<addr>` for each driver as
 #                    it loads — paste those into gdb as they scroll past.
+#   -H              Human mode: open a real GTK window (-display gtk) instead
+#                    of the default -display none. Keyboard/mouse need no
+#                    extra -device here — q35's ISA bridge brings PS/2 by
+#                    default regardless of display mode. Leave this off for
+#                    AI/CI/scripted runs: headless is the default because a
+#                    window only matters to a human watching it, and it's
+#                    one less thing to fail in a sandbox with no X server.
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
 #
@@ -47,6 +54,7 @@ BUILD_TYPE="RELEASE"
 MEM_MB=512
 RESET_SHARED=0
 GDB=0
+HUMAN=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -60,6 +68,7 @@ while [[ $# -gt 0 ]]; do
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
         -g)             GDB=1;                shift ;;
+        -H)             HUMAN=1;              shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
@@ -174,6 +183,21 @@ if [[ "$GDB" -eq 1 ]]; then
     GDB_ARGS=(-s -S)
     echo "  gdbstub   : :1234 (paused at reset — attach before it'll boot)"
 fi
+DISPLAY_ARGS=(-display none)
+DISPLAY_DESC="none (headless — pass -H for a GTK window)"
+if [[ "$HUMAN" -eq 1 ]]; then
+    # grab-on-hover: QEMU's GTK UI otherwise requires an explicit click
+    # inside the window before it'll forward keystrokes to the guest at all
+    # (input goes to your desktop instead until then) -- looks exactly like
+    # "the window is up but won't accept input," not a crash. Ctrl+Alt+G
+    # still releases the grab manually if you need your cursor back.
+    DISPLAY_ARGS=(-display gtk,grab-on-hover=on)
+    DISPLAY_DESC="gtk (-H)"
+fi
+echo "  Display   : $DISPLAY_DESC"
+echo "  Boot log  : $SCRIPT_DIR/debug.log  (DEBUG-build -debugcon trace; not"
+echo "              live-tailed here anymore -- read it after the fact, or"
+echo "              tail -f it yourself in another terminal while this runs)"
 echo "============================================================"
 echo ""
 
@@ -188,7 +212,7 @@ echo ""
     -global driver=cfi.pflash01,property=secure,value=on \
     \
     -serial stdio \
-    -display gtk \
+    "${DISPLAY_ARGS[@]}" \
     -net none \
     -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio \
     -drive file="$SHARED_IMG",format=raw,if=virtio \
@@ -201,6 +225,4 @@ echo ""
     -device tpm-tis,tpmdev=tpm0 \
     \
     "${GDB_ARGS[@]}" \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
-QEMU_PID=$!
-tail -f "$SCRIPT_DIR/debug.log" --pid=$QEMU_PID
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with SBSA firmware (QEMU 'sbsa-ref' machine, AArch64)
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [-H] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware (BL33 prints DXE dispatch over
@@ -14,6 +14,16 @@
 #                    StandaloneMm/BL33 all run at different times, different
 #                    addresses, different ELFs — one `target remote` doesn't
 #                    give you all of them at once).
+#   -H              Human mode: open a real GTK window (-display gtk) instead
+#                    of the default -display none, and attach a USB keyboard
+#                    + tablet (qemu-xhci/usb-kbd/usb-tablet — sbsa-ref has no
+#                    PS/2 controller, so without these the window has no way
+#                    to receive input at all). Serial console (-serial stdio)
+#                    stays on either way — this only adds the window+input.
+#                    Leave this off for AI/CI/scripted runs: headless is the
+#                    default because nothing but a human eyeballing a window
+#                    needs it, and it's one less thing to fail in a sandbox
+#                    with no X server.
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
 #
@@ -68,6 +78,7 @@ BUILD_TYPE="RELEASE"
 MEM_MB=1024
 RESET_SHARED=0
 GDB=0
+HUMAN=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -81,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
         -g)             GDB=1;                shift ;;
+        -H)             HUMAN=1;              shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
@@ -155,6 +167,23 @@ if [[ "$GDB" -eq 1 ]]; then
     echo "  See docs/sbsa_boot_flow.md for per-stage symbol loading."
 fi
 
+DISPLAY_ARGS=(-display none)
+DISPLAY_DESC="none (headless — pass -H for a GTK window)"
+INPUT_ARGS=()
+if [[ "$HUMAN" -eq 1 ]]; then
+    # grab-on-hover: see Q35Pkg/qemu.sh's comment on this same flag --
+    # without it, QEMU's GTK window silently ignores keystrokes until you
+    # click inside it once. Ctrl+Alt+G releases the grab manually.
+    DISPLAY_ARGS=(-display gtk,grab-on-hover=on)
+    DISPLAY_DESC="gtk (-H)"
+    # sbsa-ref has no PS/2 controller (unlike Q35's ISA bridge) and, unlike
+    # ArmVirtOrreryPkg, nothing here previously attached a USB HID device —
+    # the GTK window would open with no way to send it keystrokes at all.
+    # qemu-xhci plugs into the same PCIe root complex SbsaQemuPciHostBridgeLib
+    # already exposes to the guest; usb-kbd/usb-tablet hang off of it.
+    INPUT_ARGS=(-device qemu-xhci -device usb-kbd -device usb-tablet)
+fi
+
 echo "============================================================"
 echo "  Platform  : SBSA  ($QEMU_MACHINE)"
 echo "  Build     : $BUILD_TYPE"
@@ -163,6 +192,10 @@ echo "  RAM       : ${MEM_MB}M"
 echo "  FLASH0    : $FLASH0  (BL1 + FIP: BL2/BL31/BL32)"
 echo "  FLASH1    : $FLASH1  (BL33 + vars, persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
+echo "  Display   : $DISPLAY_DESC"
+echo "  Console   : -serial stdio — this terminal is the UEFI/TF-A console"
+echo "              either way; type into it once you reach a shell/menu."
+echo "  Boot log  : $SCRIPT_DIR/debug.log  (grep-able copy of this console)"
 echo "============================================================"
 echo ""
 
@@ -176,11 +209,13 @@ echo ""
     -pflash "$FLASH1" \
     \
     -serial stdio \
-    -display none \
+    "${DISPLAY_ARGS[@]}" \
+    "${INPUT_ARGS[@]}" \
     -global e1000e.romfile= \
     -global bochs-display.romfile= \
     \
     -drive file="$SHARED_IMG",format=raw,if=virtio \
     \
     "${GDB_ARGS[@]}" \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
+    2>&1 | tee "$SCRIPT_DIR/debug.log"

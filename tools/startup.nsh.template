@@ -1,0 +1,77 @@
+# =============================================================================
+# startup.nsh.template -- starting point for your own UEFI Shell test scripts
+# =============================================================================
+# This is a template, not something build.sh/qemu.sh consume automatically.
+# To use it:
+#
+#   cp tools/startup.nsh.template <Platform>/shared/startup.nsh
+#
+# e.g. SbsaOrreryPkg/shared/startup.nsh, ArmVirtOrreryPkg/shared/startup.nsh,
+# Q35Pkg/shared/startup.nsh. That directory is host-editable and maps onto
+# fs1: in the shell (see each qemu.sh's header comment) -- edit it, then
+# rebuild shared.img (build.sh does this on every run; or force a fresh one
+# with `qemu.sh --reset-shared`).
+#
+# It WILL auto-run -- confirmed directly (tests/test_boot.py's
+# test_q35_tpm_provision_and_lock): the Shell scans every mapped filesystem
+# for a startup.nsh and runs the first one it finds, not just fs0:. That
+# means once this is on fs1: (shared.img), it keeps auto-running on every
+# future boot too, not just the one you meant it for -- delete it (or
+# `qemu.sh --reset-shared` after removing the source file from shared/)
+# when you're done, or every subsequent boot of that platform runs it
+# again instead of dropping you at an interactive Shell> prompt.
+#
+# shared/ itself is gitignored (every dev's local apps/results, not repo
+# content) -- that's why this template lives in tools/ instead. Copy it,
+# don't edit it in place, if you want your own version to survive a
+# `git pull`.
+#
+# What actually ends up in fs1:\apps\ is controlled by <Platform>/shared/.sync
+# (also host-editable, one .efi filename per line) -- build.sh copies
+# whatever's listed there out of the build output into shared/apps/ after
+# every build. Q35Pkg/shared/.sync and ArmVirtOrreryPkg/shared/.sync already
+# list TpmProvisionApp.efi; SbsaOrreryPkg has no shared/.sync yet -- create
+# one (same format) if you want SBSA to sync any apps automatically.
+# =============================================================================
+
+echo -off
+echo "=== test run starting ==="
+
+# ---- 1. see what's actually here -------------------------------------------
+fs1:
+ls apps
+ls data
+
+# ---- 2. run an app, check its return status ---------------------------------
+# %lasterror% is the exit status of the last command/app -- 0 means success.
+# TpmProvisionApp.efi is real and already synced by default on Q35/ArmVirt
+# (see shared/.sync above); swap in whatever you've added to apps\ yourself.
+apps\TpmProvisionApp.efi
+if %lasterror% == 0 then
+  echo "TpmProvisionApp: PASS"
+else
+  echo "TpmProvisionApp: FAIL (lasterror=%lasterror%)"
+endif
+
+# ---- 3. more apps this repo builds but doesn't sync by default -------------
+# Add the filename to shared/.sync first, then uncomment:
+# apps\TpmVerifyBootApp.efi
+# if %lasterror% == 0 then
+#   echo "TpmVerifyBootApp: PASS"
+# else
+#   echo "TpmVerifyBootApp: FAIL (lasterror=%lasterror%)"
+# endif
+
+# ---- 4. inspect UEFI variables ----------------------------------------------
+# Useful for confirming a variable actually persisted -- e.g. on SBSA with
+# BL32 built in, that a write round-tripped through MM_COMMUNICATE into
+# StandaloneMm's secure NV store rather than just sitting in memory.
+dmpstore
+
+# ---- 5. leave a pass/fail marker a host-side script can check --------------
+# fs1:\data\ is SbsaOrreryPkg/shared/data (etc.) on the host -- a script
+# driving qemu.sh from outside (like tests/test_boot.py does for the boot
+# itself) can poll for this file instead of scraping serial text.
+echo "PASS" > data\result.txt
+
+echo "=== test run finished ==="

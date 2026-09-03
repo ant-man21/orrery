@@ -661,29 +661,35 @@ GenerateRandomSecret (
 
 /* ── helper: lock the secret's NV index against further writes (issue #9)
  * ─────────────────────────────────────────────────────────────────────
- * TPM_RH_OWNER authorizes the lock directly — this is deliberately
- * independent of the index's own PolicyAuthorize gate, so locking doesn't
- * require re-proving this boot's ROM. Once TPM2_NV_WriteLock sets
- * TPMA_NV_WRITELOCKED, it stays set until the index is undefined and
- * redefined (owner-authorized, same as DefineSecretNvIndex above) — there
- * is no "unlock" command.
+ * Authorized by a fresh policy session — RunAuthorizedPolicySession() run
+ * a second time, re-proving this same boot's ROM against its ticket 
  */
 STATIC EFI_STATUS
 LockSecretNvIndex (
   VOID
   )
 {
-  EFI_STATUS         Status;
-  TPMS_AUTH_COMMAND   OwnerAuthSession;
+  EFI_STATUS             Status;
+  TPMI_SH_AUTH_SESSION   LockSession;
+  TPMS_AUTH_COMMAND      AuthSession;
 
-  BuildOwnerAuthSession (&OwnerAuthSession);
+  Status = RunAuthorizedPolicySession (&LockSession);
+  if (EFI_ERROR (Status)) {
+    Print (L"[PROVISION] LockSecretNvIndex: re-proving ROM for the lock step failed: %r\n", Status);
+    return Status;
+  }
 
-  Status = Tpm2NvWriteLock (TPM_RH_OWNER, SECRET_NV_INDEX, &OwnerAuthSession);
+  ZeroMem (&AuthSession, sizeof (AuthSession));
+  AuthSession.sessionHandle = LockSession;
+
+  Status = Tpm2NvWriteLock (SECRET_NV_INDEX, SECRET_NV_INDEX, &AuthSession);
   if (EFI_ERROR (Status)) {
     Print (L"[PROVISION] Tpm2NvWriteLock failed: %r\n", Status);
   } else {
     Print (L"[PROVISION] NV index 0x%x write-locked — no further writes until redefined\n", SECRET_NV_INDEX);
   }
+
+  Tpm2FlushContext (LockSession);
 
   return Status;
 }

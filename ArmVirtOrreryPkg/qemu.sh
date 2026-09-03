@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with ArmVirt firmware (QEMU 'virt' machine, AArch64)
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [-H] [--reset-shared] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware
@@ -13,6 +13,14 @@
 #                    Build/ArmVirtQemu-AArch64/<BUILD_TYPE>_GCC/AARCH64/**/DEBUG/*.dll,
 #                    or paste the `add-symbol-file <path> 0x<addr>` lines
 #                    a DEBUG build prints for each driver as it loads.
+#   -H              Human mode: open a real GTK window (-display gtk) and
+#                    attach virtio-gpu-pci/qemu-xhci/usb-kbd/usb-tablet —
+#                    'virt' has no onboard display or input hardware (see
+#                    below), so without -H there's neither a window nor a
+#                    way to type into one. Leave this off for AI/CI/scripted
+#                    runs: headless is the default because a window only
+#                    matters to a human watching it, and it's one less thing
+#                    to fail in a sandbox with no X server.
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
 #   -h              Show this help
 #
@@ -30,7 +38,8 @@
 #     SMM is an x86 concept, not applicable to the 'virt' machine.
 #   - No `-debugcon` / isa-debugcon — 'virt' has no ISA bus, so there's no
 #     separate debug I/O port. DEBUG-build prints interleave with the shell
-#     on the same -serial console instead of going to their own debug.log.
+#     on the same -serial console; debug.log here is just a `tee` of that
+#     combined stream, not an independent lower-level channel like Q35's.
 #   - TPM device is `tpm-tis-device`, not `tpm-tis` — 'virt' has no ISA/LPC
 #     bus, so the TIS interface is exposed as a sysbus MMIO device instead
 #     of the ISA one Q35 uses. Same swtpm backend either way.
@@ -69,6 +78,7 @@ BUILD_TYPE="RELEASE"
 MEM_MB=512
 RESET_SHARED=0
 GDB=0
+HUMAN=0
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -82,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         -d)             BUILD_TYPE="DEBUG";   shift ;;
         -m)             MEM_MB="$2";          shift 2 ;;
         -g)             GDB=1;                shift ;;
+        -H)             HUMAN=1;              shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
@@ -214,6 +225,19 @@ if [[ "$GDB" -eq 1 ]]; then
     GDB_ARGS=(-s -S)
     echo "  gdbstub   : :1234 (paused at reset — attach before it'll boot)"
 fi
+DISPLAY_ARGS=(-display none)
+DISPLAY_DESC="none (headless — pass -H for a GTK window)"
+INPUT_ARGS=()
+if [[ "$HUMAN" -eq 1 ]]; then
+    # grab-on-hover: see Q35Pkg/qemu.sh's comment on this same flag --
+    # without it, QEMU's GTK window silently ignores keystrokes until you
+    # click inside it once. Ctrl+Alt+G releases the grab manually.
+    DISPLAY_ARGS=(-display gtk,grab-on-hover=on)
+    DISPLAY_DESC="gtk (-H)"
+    INPUT_ARGS=(-device virtio-gpu-pci -device qemu-xhci -device usb-kbd -device usb-tablet)
+fi
+echo "  Display   : $DISPLAY_DESC"
+echo "  Boot log  : $SCRIPT_DIR/debug.log  (grep-able copy of this console)"
 echo "============================================================"
 echo ""
 
@@ -226,11 +250,8 @@ echo ""
     -drive if=pflash,format=raw,file="$VARS_FD" \
     \
     -serial stdio \
-    -display gtk \
-    -device virtio-gpu-pci \
-    -device qemu-xhci \
-    -device usb-kbd \
-    -device usb-tablet \
+    "${DISPLAY_ARGS[@]}" \
+    "${INPUT_ARGS[@]}" \
     -net none \
     -drive file="$SCRIPT_DIR/uefi-shell.img",format=raw,if=virtio \
     -drive file="$SHARED_IMG",format=raw,if=virtio \
@@ -240,4 +261,5 @@ echo ""
     -device tpm-tis-device,tpmdev=tpm0 \
     \
     "${GDB_ARGS[@]}" \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
+    2>&1 | tee "$SCRIPT_DIR/debug.log"
