@@ -162,3 +162,16 @@ jobs:
           path: ${{ matrix.artifact_paths }}
           retention-days: 7
           if-no-files-found: error
+          # actions/upload-artifact strips dotfiles by default. Q35's
+          # artifact_paths includes the whole Q35Pkg/shared directory
+          # specifically so shared/.sync travels with it -- boot_test.yml's
+          # checkout is fresh (shared/ is gitignored, .sync only exists
+          # because the step above wrote it into *this* job's runner), so
+          # without shipping it through the artifact,
+          # test_q35_tpm_provision_and_lock's `sync_list.exists()` check
+          # would always see a missing file and skip, regardless of
+          # whether TpmProvisionApp.efi was actually synced into
+          # shared.img. Confirmed directly: PR #42's own CI run skipped
+          # this test even though .sync was written and shared.img was
+          # built correctly -- the file just never survived the upload.
+          include-hidden-files: true
