@@ -16,6 +16,8 @@ ArmVirtOrreryPkg/shared/
 SbsaOrreryPkg/vars/
 SbsaOrreryPkg/shared/
 shared.img
+OpenBmcPkg/images/
+OpenBmcPkg/sbsa-console.log
 trusted-firmware-a/build/
 # Update-signing private key — never commit. Only the .pem private key is
 # secret; the generated public-key header (OrreryPkg/Include/TrustedUpdateKey.h)

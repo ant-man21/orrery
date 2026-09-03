@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # qemu.sh — Launch QEMU with SBSA firmware (QEMU 'sbsa-ref' machine, AArch64)
-# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [-- <extra qemu args>]
+# Usage: ./qemu.sh [-r|-d] [-m MEM] [-g] [--reset-shared] [--bmc-mgmt[=PORT]] [-- <extra qemu args>]
 #
 #   -r              Use RELEASE build firmware  (default)
 #   -d              Use DEBUG build firmware (BL33 prints DXE dispatch over
@@ -15,6 +15,12 @@
 #                    addresses, different ELFs — one `target remote` doesn't
 #                    give you all of them at once).
 #   --reset-shared  Wipe and recreate shared.img (fresh FAT disk)
+#   --bmc-mgmt[=PORT]  Connect this "host"'s onboard NIC to OpenBmcPkg's
+#                    simulated BMC over a private management-LAN link
+#                    instead of the default usermode/NAT network — the
+#                    OpenBmcPkg/qemu.sh --link-sbsa[=PORT] side (default
+#                    port: 8888) must already be listening first (start it
+#                    before this). See docs/openbmc_boot_flow.md.
 #   -h              Show this help
 #
 # Differences from ArmVirtOrreryPkg/qemu.sh and Q35Pkg/qemu.sh (not just a
@@ -49,6 +55,12 @@
 #     sbsa-ref's discrete-TPM story (TIS/CRB over which bus) hasn't been
 #     verified end-to-end the way ArmVirt's tpm-tis-device / Q35's tpm-tis
 #     have — see docs/sbsa_boot_flow.md.
+#   - Always opens a QMP socket (vars/qemu-monitor.sock) alongside -serial
+#     stdio, harmless when unused: it's how OpenBmcPkg/power-bridge.sh (or
+#     you, by hand — see docs/openbmc_boot_flow.md) sends this "host"
+#     system_powerdown/system_reset/quit from outside the process, the way
+#     a real host's power button is wired to something other than its own
+#     keyboard.
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,6 +80,8 @@ BUILD_TYPE="RELEASE"
 MEM_MB=1024
 RESET_SHARED=0
 GDB=0
+BMC_MGMT=0
+BMC_MGMT_PORT=8888
 
 # ---------- args --------------------------------------------------------------
 usage() {
@@ -82,6 +96,8 @@ while [[ $# -gt 0 ]]; do
         -m)             MEM_MB="$2";          shift 2 ;;
         -g)             GDB=1;                shift ;;
         --reset-shared) RESET_SHARED=1;       shift ;;
+        --bmc-mgmt)     BMC_MGMT=1;           shift ;;
+        --bmc-mgmt=*)   BMC_MGMT=1; BMC_MGMT_PORT="${1#*=}"; shift ;;
         -h)             usage ;;
         --)             shift; EXTRA_ARGS=("$@"); break ;;
          *)             echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
@@ -155,6 +171,22 @@ if [[ "$GDB" -eq 1 ]]; then
     echo "  See docs/sbsa_boot_flow.md for per-stage symbol loading."
 fi
 
+# ---------- networking ----------------------------------------------------
+# sbsa-ref's onboard e1000e is a fixed/hardwired device (see header comment
+# above) — QEMU only lets you back it via the legacy "-net nic"/"-nic"
+# single-backend mechanism, not a separate -netdev id + -device pair (that
+# creates a second, unusable NIC instead). Confirmed empirically the same
+# way OpenBmcPkg/qemu.sh's own header documents for romulus-bmc's NICs.
+NET_ARGS=()
+if [[ "$BMC_MGMT" -eq 1 ]]; then
+    echo "→ Management-LAN mode: connecting to OpenBmcPkg's BMC at"
+    echo "  127.0.0.1:${BMC_MGMT_PORT} (start OpenBmcPkg/qemu.sh --link-sbsa"
+    echo "  first — it must already be listening)."
+    NET_ARGS=(-nic "socket,connect=:${BMC_MGMT_PORT}")
+fi
+
+QMP_SOCK="$VARS_DIR/qemu-monitor.sock"
+
 echo "============================================================"
 echo "  Platform  : SBSA  ($QEMU_MACHINE)"
 echo "  Build     : $BUILD_TYPE"
@@ -163,6 +195,7 @@ echo "  RAM       : ${MEM_MB}M"
 echo "  FLASH0    : $FLASH0  (BL1 + FIP: BL2/BL31/BL32)"
 echo "  FLASH1    : $FLASH1  (BL33 + vars, persistent)"
 echo "  Shared    : $SHARED_IMG  → fs1: in shell"
+echo "  QMP       : $QMP_SOCK  (system_powerdown/system_reset/quit)"
 echo "============================================================"
 echo ""
 
@@ -182,5 +215,8 @@ echo ""
     \
     -drive file="$SHARED_IMG",format=raw,if=virtio \
     \
+    -qmp "unix:$QMP_SOCK,server=on,wait=off" \
+    \
+    "${NET_ARGS[@]}" \
     "${GDB_ARGS[@]}" \
     "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

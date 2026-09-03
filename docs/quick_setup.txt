@@ -25,6 +25,12 @@ make -C edk2/BaseTools
 ( cd Q35Pkg && ./qemu.sh -r )
 ( cd ArmVirtOrreryPkg && ./qemu.sh -r )
 
+# 6. OpenBMC (separate from the three edk2 platforms above — no submodules,
+#    no build; downloads an official prebuilt image instead. See
+#    docs/openbmc_boot_flow.md for the why, the BMC<->host network link, and
+#    what to actually try once it's up).
+( cd OpenBmcPkg && ./build.sh && ./qemu.sh )
+
 # --- Troubleshooting quick hits -----------------------------------------
 # "MipiSysTLib/mipisyst/library/include is not found in packages path"
 #   -> step 1 was skipped or ran non-recursively.
@@ -35,3 +41,8 @@ make -C edk2/BaseTools
 # QEMU asserts/hangs on "broken CPU hotplug register block"
 #   -> host QEMU is < 8.0 (common on Ubuntu 22.04's packaged 6.2); see the
 #      QEMU-from-source section in host_environment.txt.
+# OpenBmcPkg/build.sh fails to download (curl error / connection refused)
+#   -> jenkins.openbmc.org unreachable from this network — common in
+#      sandboxed/restricted dev environments; see docs/openbmc_boot_flow.md's
+#      "What was and wasn't verified here". Needs a normal, unrestricted
+#      network.
