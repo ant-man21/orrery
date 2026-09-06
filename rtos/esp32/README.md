@@ -117,23 +117,47 @@ on every push and PR, and uploads the resulting `.bin`/`.elf` as a build
 artifact — so a red CI check means "this doesn't compile," not "no one
 checked."
 
-**For flashing and J-Link debugging** you need direct USB/JTAG device
-access, which the Docker container doesn't have by default, so install
-ESP-IDF natively for that part:
+The Docker container can't reach your USB port, so flashing needs a
+different tool — see **Flashing** below, which doesn't need the full
+toolchain either.
+
+## Flashing — like clicking "Run" in STM32CubeIDE
+
+Building and flashing are separate steps here, and flashing is the
+lightweight one: `esptool` (a small pip package, no compiler toolchain)
+is enough to write already-built `.bin` files to the board. You never
+need the full ESP-IDF install just to flash.
 
 ```sh
-git clone -b v5.3.1 --depth 1 https://github.com/espressif/esp-idf.git
-cd esp-idf && ./install.sh esp32s3 && source ./export.sh
-
 cd rtos/esp32
-idf.py set-target esp32s3
-idf.py -p /dev/ttyACM0 flash monitor   # port varies; use whichever USB-C port enumerates
+./flash.sh              # auto-detects the port, flashes ./build
 ```
 
-Pin the same `v5.3.1` tag as `build.sh`/CI so all three build the same
-bits. `sdkconfig.defaults` already pins the target to `esp32s3` and sets
-the watchdog timeout to 4s (matching the STM32 IWDG), so `set-target`
-only needs to run once per fresh `build/` directory.
+That's the one-command equivalent of the STM32CubeIDE Run button. It
+installs `esptool` on first use if it's missing, auto-detects the USB
+serial port, and writes the bootloader + partition table + app in one
+shot using the exact offsets `idf.py build` generated
+(`build/flash_args`). Pass a port explicitly if auto-detect picks the
+wrong one (e.g. two boards plugged in): `./flash.sh /dev/ttyACM0`.
+
+**Don't have a local build?** Every CI run now uploads a `firmware-esp32`
+artifact with everything `flash.sh` needs — download it from the PR's
+"Checks" tab or the Actions run, unzip it, and run:
+
+```sh
+BUILD_DIR=~/Downloads/firmware-esp32 ./flash.sh
+```
+
+**Entering flash mode:** the DevKitC-1's UART/USB-serial port
+auto-resets the board into the bootloader for you, same as an ST-Link
+does for the STM32 build — no button needed in the normal case. If a
+flash attempt times out waiting for the chip to respond (more likely
+over the native USB-OTG port), put it in bootloader mode by hand: hold
+**BOOT**, tap **RESET**, release **BOOT**, then re-run `./flash.sh`.
+
+To watch serial output afterward: `pip install --user esp-idf-monitor`
+then `python3 -m esp_idf_monitor --port /dev/ttyACM0` (or `idf.py
+monitor` if you have the full toolchain installed for J-Link work below).
 
 <details>
 <summary>Troubleshooting: pip install hangs or fails during <code>install.sh</code></summary>
@@ -160,12 +184,21 @@ to a contemporary release:
 pip install "idf-component-manager==1.5.3"
 ```
 
-None of this affects `build.sh` or CI — the official Docker image already
-bundles a matched, working `idf-component-manager`, so this only matters
-for a native install on a similarly restricted network.
+None of this affects `build.sh`, `flash.sh`, or CI — the official Docker
+image already bundles a matched, working `idf-component-manager`, so
+this only matters for a native ESP-IDF install (needed for J-Link
+debugging below) on a similarly restricted network.
 </details>
 
 ## Debugging / single-stepping with a J-Link
+
+This needs the full native ESP-IDF install (OpenOCD + GDB aren't part of
+`flash.sh`'s lightweight esptool-only path):
+
+```sh
+git clone -b v5.3.1 --depth 1 https://github.com/espressif/esp-idf.git
+cd esp-idf && ./install.sh esp32s3 && source ./export.sh
+```
 
 The S3's JTAG pins are fixed and already reserved for this in `pins.h`:
 

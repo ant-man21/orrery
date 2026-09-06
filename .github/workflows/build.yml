@@ -222,5 +222,12 @@ jobs:
             rtos/esp32/build/*.elf
             rtos/esp32/build/bootloader/*.bin
             rtos/esp32/build/partition_table/*.bin
+            rtos/esp32/build/flash_args
           retention-days: 7
           if-no-files-found: error
+          # flash_args's offsets are relative (bootloader/bootloader.bin,
+          # orrery_esp32.bin, partition_table/partition-table.bin) --
+          # upload-artifact's shared-ancestor flattening keeps this same
+          # layout in the zip (ancestor is rtos/esp32/build/), so
+          # flash.sh's `esptool @flash_args` works unmodified straight
+          # out of a downloaded, extracted CI artifact.
