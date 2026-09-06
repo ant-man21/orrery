@@ -202,6 +202,14 @@ jobs:
       - name: Build firmware (esp32)
         shell: bash
         run: |
+          # GitHub Actions' `container:` execs into the image via
+          # `docker exec`, bypassing espressif/idf's own ENTRYPOINT --
+          # the one that normally sources export.sh and puts idf.py on
+          # PATH. Source it explicitly instead of relying on the image
+          # to do it for us (confirmed by a real CI failure: "idf.py:
+          # command not found" with $IDF_PATH still set from the image's
+          # ENV, since that part isn't entrypoint-dependent).
+          . "$IDF_PATH/export.sh"
           idf.py set-target esp32s3
           idf.py build
 
