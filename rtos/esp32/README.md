@@ -88,21 +88,82 @@ Wire the shift-register chain and buttons to the new GPIOs above instead
 of the old STM32 pins; everything else (8x 28BYJ-48 via ULN2003 through a
 595-style shift chain, 3 momentary buttons to GND) is unchanged.
 
-## Building and flashing
+## Building — reproducibly, with minimal setup
 
-Requires **ESP-IDF v5.1 or newer** (the watchdog API used in `main.c`,
-`esp_task_wdt_add`/`esp_task_wdt_reset`, is the IDF v5.x signature).
+This has been built and verified end-to-end against real ESP-IDF **v5.3.1**
+(the exact version pinned below) — a clean `idf.py build` compiles
+`main.c` and `stepper.c` with zero warnings and links a
+`orrery_esp32.bin` (~233KB image, well under the default 1MB app
+partition). That's not just "should work" — it was actually compiled.
+
+**Easiest path: Docker, one command, nothing to install.**
 
 ```sh
 cd rtos/esp32
+./build.sh
+```
+
+That's it. `build.sh` runs `idf.py set-target esp32s3 && idf.py build`
+inside Espressif's official `espressif/idf:v5.3.1` container, mounting
+this directory in. No ESP-IDF install, no Python environment, no PATH
+setup — just Docker. It's pinned to that exact image tag (not `latest`),
+so it builds against the same compiler and SDK version every time, on
+your machine or anyone else's. Pass any `idf.py` subcommand as an
+argument, e.g. `./build.sh fullclean`.
+
+**Also reproducible: CI builds it on every push.** `.github/workflows/build.yml`
+has an `esp32` job that runs this exact same build (same pinned image tag)
+on every push and PR, and uploads the resulting `.bin`/`.elf` as a build
+artifact — so a red CI check means "this doesn't compile," not "no one
+checked."
+
+**For flashing and J-Link debugging** you need direct USB/JTAG device
+access, which the Docker container doesn't have by default, so install
+ESP-IDF natively for that part:
+
+```sh
+git clone -b v5.3.1 --depth 1 https://github.com/espressif/esp-idf.git
+cd esp-idf && ./install.sh esp32s3 && source ./export.sh
+
+cd rtos/esp32
 idf.py set-target esp32s3
-idf.py build
 idf.py -p /dev/ttyACM0 flash monitor   # port varies; use whichever USB-C port enumerates
 ```
 
-`sdkconfig.defaults` already pins the target to `esp32s3` and sets the
-watchdog timeout to 4s (matching the STM32 IWDG), so `set-target` only
-needs to run once per fresh `build/` directory.
+Pin the same `v5.3.1` tag as `build.sh`/CI so all three build the same
+bits. `sdkconfig.defaults` already pins the target to `esp32s3` and sets
+the watchdog timeout to 4s (matching the STM32 IWDG), so `set-target`
+only needs to run once per fresh `build/` directory.
+
+<details>
+<summary>Troubleshooting: pip install hangs or fails during <code>install.sh</code></summary>
+
+If your network blocks `dl.espressif.com` (some corporate/sandboxed
+networks do — that's what happened while building this), `install.sh`
+either hangs retrying a Python package mirror or fails outright fetching
+`espidf.constraints.v5.3.txt`. Two fixes, both needed:
+
+```sh
+export IDF_PYTHON_CHECK_CONSTRAINTS=no   # skip the blocked constraints file
+./install.sh esp32s3
+source ./export.sh
+```
+
+Skipping constraints means pip resolves `idf-component-manager` to the
+latest PyPI release instead of the version IDF 5.3.1 was tested against —
+the newest one (3.x) speaks a component-manager protocol IDF 5.3.1
+doesn't understand and `idf.py build` fails with
+`argument --interface_version: invalid choice`. Fix by pinning it back
+to a contemporary release:
+
+```sh
+pip install "idf-component-manager==1.5.3"
+```
+
+None of this affects `build.sh` or CI — the official Docker image already
+bundles a matched, working `idf-component-manager`, so this only matters
+for a native install on a similarly restricted network.
+</details>
 
 ## Debugging / single-stepping with a J-Link
 
