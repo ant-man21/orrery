@@ -57,30 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define EARTH_IN4_Pin GPIO_PIN_1
-#define EARTH_IN4_GPIO_Port GPIOA
-#define EARTH_IN1_Pin GPIO_PIN_0
-#define EARTH_IN1_GPIO_Port GPIOB
-#define EARTH_IN2_Pin GPIO_PIN_1
-#define EARTH_IN2_GPIO_Port GPIOB
-#define EARTH_IN3_Pin GPIO_PIN_10
-#define EARTH_IN3_GPIO_Port GPIOB
-#define MERCURY_IN1_Pin GPIO_PIN_12
-#define MERCURY_IN1_GPIO_Port GPIOB
-#define MERCURY_IN2_Pin GPIO_PIN_13
-#define MERCURY_IN2_GPIO_Port GPIOB
-#define MERCURY_IN3_Pin GPIO_PIN_14
-#define MERCURY_IN3_GPIO_Port GPIOB
-#define MERCURY_IN4_Pin GPIO_PIN_15
-#define MERCURY_IN4_GPIO_Port GPIOB
-#define VENUS_IN1_Pin GPIO_PIN_8
-#define VENUS_IN1_GPIO_Port GPIOA
-#define VENUS_IN2_Pin GPIO_PIN_9
-#define VENUS_IN2_GPIO_Port GPIOA
-#define VENUS_IN3_Pin GPIO_PIN_10
-#define VENUS_IN3_GPIO_Port GPIOA
-#define VENUS_IN4_Pin GPIO_PIN_15
-#define VENUS_IN4_GPIO_Port GPIOA
+#define MOTOR_LATCH_Pin GPIO_PIN_4
+#define MOTOR_LATCH_GPIO_Port GPIOA
+#define BTN_SIM_Pin GPIO_PIN_4
+#define BTN_SIM_GPIO_Port GPIOB
+#define BTN_RT_Pin GPIO_PIN_5
+#define BTN_RT_GPIO_Port GPIOB
+#define BTN_RESET_Pin GPIO_PIN_6
+#define BTN_RESET_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

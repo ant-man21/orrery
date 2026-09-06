@@ -41,6 +41,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi2;
+
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
@@ -63,12 +66,14 @@ const osThreadAttr_t CommTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-
+IWDG_HandleTypeDef hiwdg;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_SPI2_Init(void);
 void StartDefaultTask(void *argument);
 void MotionTaskStart(void *argument);
 void CommTaskStart(void *argument);
@@ -111,8 +116,38 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_SPI1_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
+  {
+    /* CubeMX generated these as NOPULL; force pull-up so each button just
+       needs to short its pin to GND when pressed, no external resistor. */
+    GPIO_InitTypeDef btnInit = {0};
+    btnInit.Mode  = GPIO_MODE_INPUT;
+    btnInit.Pull  = GPIO_PULLUP;
+    btnInit.Speed = GPIO_SPEED_FREQ_LOW;
 
+    btnInit.Pin = BTN_SIM_Pin;
+    HAL_GPIO_Init(BTN_SIM_GPIO_Port, &btnInit);
+
+    btnInit.Pin = BTN_RT_Pin;
+    HAL_GPIO_Init(BTN_RT_GPIO_Port, &btnInit);
+
+    btnInit.Pin = BTN_RESET_Pin;
+    HAL_GPIO_Init(BTN_RESET_GPIO_Port, &btnInit);
+  }
+
+  /* Independent watchdog: if the motion loop ever stops refreshing this
+     (frozen task, whatever the cause), the chip resets itself and resumes
+     on its own instead of needing a manual power cycle. LSI ~32kHz /
+     prescaler 64 = 500Hz tick; reload 2000 -> ~4 second timeout, long
+     enough that a normal 1ms poll loop never comes close. */
+  hiwdg.Instance = IWDG;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
+  hiwdg.Init.Reload    = 2000;
+  if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -210,6 +245,81 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief SPI2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI2_Init(void)
+{
+
+  /* USER CODE BEGIN SPI2_Init 0 */
+
+  /* USER CODE END SPI2_Init 0 */
+
+  /* USER CODE BEGIN SPI2_Init 1 */
+
+  /* USER CODE END SPI2_Init 1 */
+  /* SPI2 parameter configuration*/
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_SLAVE;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI2_Init 2 */
+
+  /* USER CODE END SPI2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -226,29 +336,19 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, EARTH_IN4_Pin|VENUS_IN1_Pin|VENUS_IN2_Pin|VENUS_IN3_Pin
-                          |VENUS_IN4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(MOTOR_LATCH_GPIO_Port, MOTOR_LATCH_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, EARTH_IN1_Pin|EARTH_IN2_Pin|EARTH_IN3_Pin|MERCURY_IN1_Pin
-                          |MERCURY_IN2_Pin|MERCURY_IN3_Pin|MERCURY_IN4_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : EARTH_IN4_Pin VENUS_IN1_Pin VENUS_IN2_Pin VENUS_IN3_Pin
-                           VENUS_IN4_Pin */
-  GPIO_InitStruct.Pin = EARTH_IN4_Pin|VENUS_IN1_Pin|VENUS_IN2_Pin|VENUS_IN3_Pin
-                          |VENUS_IN4_Pin;
+  /*Configure GPIO pin : MOTOR_LATCH_Pin */
+  GPIO_InitStruct.Pin = MOTOR_LATCH_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(MOTOR_LATCH_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : EARTH_IN1_Pin EARTH_IN2_Pin EARTH_IN3_Pin MERCURY_IN1_Pin
-                           MERCURY_IN2_Pin MERCURY_IN3_Pin MERCURY_IN4_Pin */
-  GPIO_InitStruct.Pin = EARTH_IN1_Pin|EARTH_IN2_Pin|EARTH_IN3_Pin|MERCURY_IN1_Pin
-                          |MERCURY_IN2_Pin|MERCURY_IN3_Pin|MERCURY_IN4_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  /*Configure GPIO pins : BTN_SIM_Pin BTN_RT_Pin BTN_RESET_Pin */
+  GPIO_InitStruct.Pin = BTN_SIM_Pin|BTN_RT_Pin|BTN_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -297,33 +397,49 @@ void StartDefaultTask(void *argument)
 void MotionTaskStart(void *argument)
 {
   /* USER CODE BEGIN MotionTaskStart */
-  Stepper_t mercury = {
-      .port = { MERCURY_IN1_GPIO_Port, MERCURY_IN2_GPIO_Port, MERCURY_IN3_GPIO_Port, MERCURY_IN4_GPIO_Port },
-      .pin  = { MERCURY_IN1_Pin, MERCURY_IN2_Pin, MERCURY_IN3_Pin, MERCURY_IN4_Pin },
-      .stepIndex = 0
-  };
-  Stepper_t venus = {
-      .port = { VENUS_IN1_GPIO_Port, VENUS_IN2_GPIO_Port, VENUS_IN3_GPIO_Port, VENUS_IN4_GPIO_Port },
-      .pin  = { VENUS_IN1_Pin, VENUS_IN2_Pin, VENUS_IN3_Pin, VENUS_IN4_Pin },
-      .stepIndex = 0
-  };
+  Motor_InitAll();
 
-  const float degreesPerMove = 180.0f;
-  const uint32_t stepDelayTicks = 1;
-  const int8_t direction = 1;
-  const int32_t stepsPerMove = (int32_t)(degreesPerMove / 360.0f * STEPPER_STEPS_PER_REV);
+  bool simPrev = true, rtPrev = true, resetPrev = true; /* idle = HIGH via pull-up */
+  uint32_t simEdgeMs = 0, rtEdgeMs = 0, resetEdgeMs = 0;
+  const uint32_t DEBOUNCE_MS = 30;
 
   /* Infinite loop */
   for(;;)
   {
-    for (int32_t i = 0; i < stepsPerMove; i++)
-    {
-      Stepper_Step(&mercury, direction);
-      Stepper_Step(&venus, direction);
-      osDelay(stepDelayTicks);
+    uint32_t nowMs = HAL_GetTick();
+
+    bool simNow = (HAL_GPIO_ReadPin(BTN_SIM_GPIO_Port, BTN_SIM_Pin) == GPIO_PIN_SET);
+    if (simNow != simPrev && (nowMs - simEdgeMs) > DEBOUNCE_MS) {
+      simEdgeMs = nowMs;
+      simPrev = simNow;
+      if (!simNow) { /* active-low: falling edge = pressed */
+        Motor_SetModeSim();
+      }
     }
 
-    osDelay(pdMS_TO_TICKS(2000));
+    bool rtNow = (HAL_GPIO_ReadPin(BTN_RT_GPIO_Port, BTN_RT_Pin) == GPIO_PIN_SET);
+    if (rtNow != rtPrev && (nowMs - rtEdgeMs) > DEBOUNCE_MS) {
+      rtEdgeMs = nowMs;
+      rtPrev = rtNow;
+      if (!rtNow) {
+        Motor_SetModeRealtime();
+      }
+    }
+
+    bool resetNow = (HAL_GPIO_ReadPin(BTN_RESET_GPIO_Port, BTN_RESET_Pin) == GPIO_PIN_SET);
+    if (resetNow != resetPrev && (nowMs - resetEdgeMs) > DEBOUNCE_MS) {
+      resetEdgeMs = nowMs;
+      resetPrev = resetNow;
+      if (!resetNow) {
+        Motor_ButtonReset();
+      }
+    }
+
+    Motor_Poll();
+
+    HAL_IWDG_Refresh(&hiwdg);
+
+    osDelay(1);
   }
   /* USER CODE END MotionTaskStart */
 }
