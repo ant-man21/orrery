@@ -1,13 +1,14 @@
 /*
- * Orrery firmware - ESP32-S3 port.
+ * Orrery firmware - ESP32 port.
  *
  * Ported from the STM32F411 (Blackpill) build in rtos/Orrery. Same three
  * FreeRTOS tasks, same motor/button behavior in stepper.c; only the
  * hardware glue below (GPIO/SPI setup, task creation, watchdog) changed
  * to target ESP-IDF's native FreeRTOS instead of STM32 HAL + CMSIS-RTOS2.
  *
- * Board: ESP32-S3-DevKitC-1 (full-size, dual USB-C). See README.md for
- * pin-map rationale, build/flash instructions, and J-Link/OpenOCD setup.
+ * Board: classic ESP32-WROOM-32 devkit (USB-C, single port -- no native
+ * USB peripheral on this chip). See README.md for pin-map rationale,
+ * build/flash instructions, and J-Link/OpenOCD setup.
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

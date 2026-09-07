@@ -23,7 +23,7 @@ docker run --rm \
     -u "$(id -u)":"$(id -g)" \
     -e HOME=/tmp \
     "$IDF_DOCKER_IMAGE" \
-    bash -c ". \"\$IDF_PATH/export.sh\" && idf.py set-target esp32s3 && idf.py $CMD"
+    bash -c ". \"\$IDF_PATH/export.sh\" && idf.py set-target esp32 && idf.py $CMD"
     # Sourcing export.sh explicitly rather than trusting the image's own
     # ENTRYPOINT to do it: that assumption broke CI, where GitHub
     # Actions execs into the container directly and never runs the

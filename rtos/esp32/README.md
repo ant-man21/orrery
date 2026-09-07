@@ -4,31 +4,26 @@ Port of the STM32F411 (Blackpill) FreeRTOS firmware in `rtos/Orrery` to an
 ESP32 target, so the project can grow a network link (for real ephemeris
 data) and be debugged over JTAG with an external SEGGER J-Link.
 
-## Decisions made for this port (please confirm)
+## Decisions made for this port
 
-Two things had to be picked without a follow-up, since this was built
-while you were offline. Both are easy to change if they're wrong — say
-the word and I'll redo the affected parts.
-
-1. **Board: ESP32-S3-DevKitC-1** (N16R8 or N8R8; "full-size" devkit, not
-   one of the -Mini/-Zero boards). Reasoning:
-   - It's the standard "full size" ESP32 devkit form factor.
-   - It ships with USB-C (two of them, actually — see below).
-   - The S3 has WiFi + BT for the internet link you mentioned wanting
-     later.
-   - The S3 exposes dedicated JTAG pins (GPIO39-42) for exactly the
-     external J-Link debugging you asked about — the plain ESP32 (no
-     "S3"/"C3" suffix) doesn't have a documented external-JTAG story as
-     clean as the S3's, and has no native USB.
-   - If you actually meant the plain ESP32 (no native USB, JTAG only via
-     bit-banged/limited support) or an S2/C3 variant, let me know and
-     I'll re-map pins accordingly — the application logic in `stepper.c`
-     doesn't change either way.
-   - DevKitC-1 has **two USB-C ports**: one labeled `USB` (native USB-OTG,
-     wired straight to the S3's own USB peripheral) and one labeled `UART`
-     (USB-to-serial bridge for flashing/console on boards that have it).
-     Either works for flashing; the README below assumes whichever one
-     enumerates as a serial port for you.
+1. **Board: classic ESP32-WROOM-32** (a USB-C devkit, confirmed against
+   the actual hardware). This is a meaningfully different chip from the
+   ESP32-**S3** this port originally targeted, so it's worth being
+   explicit about what that changes:
+   - **No native USB.** The WROOM-32 module has no USB peripheral at
+     all — the board's single USB-C port is power plus a USB-to-serial
+     bridge chip (CP2102 or CH340, depending on the board), same role
+     as the ST-Link/USB combo on the STM32 Blackpill.
+   - **JTAG is external-only** (GPIO12-15, fixed in silicon) — which is
+     exactly what you asked for with the J-Link anyway, so this isn't a
+     downside here.
+   - **Different danger pins**: GPIO6-11 are wired to the module's own
+     flash (never touch them), GPIO0/2/15 are boot-strapping pins,
+     GPIO34-39 are input-only (no pull-up/down, so unusable for the
+     buttons below), and GPIO1/3 are the UART used for flashing/console.
+     `main/pins.h` avoids all of these; see its header comment for the
+     full reasoning.
+   - WiFi + BT are still onboard, so the internet-link plan is unaffected.
 
 2. **Framework: ESP-IDF, not Arduino.** You asked directly, so here's the
    reasoning:
@@ -52,7 +47,7 @@ The physical/orbital-mechanics logic in `stepper.c` is untouched — same
 gear ratios, orbital periods, half-step table, SIM/REALTIME/homing state
 machine. Only the hardware layer changed:
 
-| STM32 (Blackpill)                         | ESP32-S3 port                              |
+| STM32 (Blackpill)                         | ESP32 port                                 |
 |--------------------------------------------|---------------------------------------------|
 | HAL_SPI (SPI1, master, TX-only)           | ESP-IDF `spi_master` driver (`SPI2_HOST`)   |
 | `HAL_GPIO_*`                               | `driver/gpio.h`                             |
@@ -71,30 +66,35 @@ free-running 64-bit microsecond counter, so that workaround is gone —
 ## Pin map
 
 See `main/pins.h` for the full table and reasoning (which pins are
-avoided and why: octal flash/PSRAM, strapping pins, native-USB D+/D-, and
-GPIO39-42 reserved for JTAG). Short version:
+avoided and why: flash pins, boot-strapping pins, input-only pins, UART0,
+and GPIO12-15 reserved for JTAG). Short version:
 
-| Signal         | ESP32-S3 GPIO |
-|----------------|---------------|
-| MOTOR_SCK      | 12            |
-| MOTOR_MOSI     | 11            |
-| MOTOR_LATCH    | 10            |
-| BTN_SIM        | 4             |
-| BTN_RT         | 5             |
-| BTN_RESET      | 6             |
-| STATUS_LED     | 2 (external LED; onboard WS2812 is GPIO48 but needs a driver, not a plain GPIO toggle) |
+| Signal         | ESP32-WROOM-32 GPIO |
+|----------------|---------------------|
+| MOTOR_SCK      | 18                  |
+| MOTOR_MOSI     | 23                  |
+| MOTOR_LATCH    | 19                  |
+| BTN_SIM        | 32                  |
+| BTN_RT         | 33                  |
+| BTN_RESET      | 25                  |
+| STATUS_LED     | 2 (many WROOM-32 devkits already have an onboard LED wired here — check yours before adding an external one) |
 
-Wire the shift-register chain and buttons to the new GPIOs above instead
-of the old STM32 pins; everything else (8x 28BYJ-48 via ULN2003 through a
-595-style shift chain, 3 momentary buttons to GND) is unchanged.
+Both boards run 3.3V logic, so this is a straight pin swap — no level
+shifters, no resistor changes. Move the shift-register clock/data/latch
+and the three button signal wires from the old STM32 pins to the GPIOs
+above; everything downstream (8x 28BYJ-48 via ULN2003 through a
+595-style shift chain, 3 momentary buttons' other leg to GND) is
+unchanged.
 
 ## Building — reproducibly, with minimal setup
 
 This has been built and verified end-to-end against real ESP-IDF **v5.3.1**
 (the exact version pinned below) — a clean `idf.py build` compiles
 `main.c` and `stepper.c` with zero warnings and links a
-`orrery_esp32.bin` (~233KB image, well under the default 1MB app
-partition). That's not just "should work" — it was actually compiled.
+`orrery_esp32.bin` (~208KB image, well under the default 1MB app
+partition). That's not just "should work" — it was actually compiled,
+for both the ESP32-S3 this port was originally scoped for and the
+classic ESP32-WROOM-32 the hardware turned out to be.
 
 **Easiest path: Docker, one command, nothing to install.**
 
@@ -103,7 +103,7 @@ cd rtos/esp32
 ./build.sh
 ```
 
-That's it. `build.sh` runs `idf.py set-target esp32s3 && idf.py build`
+That's it. `build.sh` runs `idf.py set-target esp32 && idf.py build`
 inside Espressif's official `espressif/idf:v5.3.1` container, mounting
 this directory in. No ESP-IDF install, no Python environment, no PATH
 setup — just Docker. It's pinned to that exact image tag (not `latest`),
@@ -148,12 +148,12 @@ artifact with everything `flash.sh` needs — download it from the PR's
 BUILD_DIR=~/Downloads/firmware-esp32 ./flash.sh
 ```
 
-**Entering flash mode:** the DevKitC-1's UART/USB-serial port
-auto-resets the board into the bootloader for you, same as an ST-Link
-does for the STM32 build — no button needed in the normal case. If a
-flash attempt times out waiting for the chip to respond (more likely
-over the native USB-OTG port), put it in bootloader mode by hand: hold
-**BOOT**, tap **RESET**, release **BOOT**, then re-run `./flash.sh`.
+**Entering flash mode:** the board's USB-serial bridge chip auto-resets
+it into the bootloader for you, same as an ST-Link does for the STM32
+build — no button needed in the normal case. If a flash attempt times
+out waiting for the chip to respond, put it in bootloader mode by hand:
+hold **BOOT**, tap **RESET** (sometimes labeled **EN**), release
+**BOOT**, then re-run `./flash.sh`.
 
 To watch serial output afterward: `pip install --user esp-idf-monitor`
 then `python3 -m esp_idf_monitor --port /dev/ttyACM0` (or `idf.py
@@ -169,7 +169,7 @@ either hangs retrying a Python package mirror or fails outright fetching
 
 ```sh
 export IDF_PYTHON_CHECK_CONSTRAINTS=no   # skip the blocked constraints file
-./install.sh esp32s3
+./install.sh esp32
 source ./export.sh
 ```
 
@@ -197,17 +197,27 @@ This needs the full native ESP-IDF install (OpenOCD + GDB aren't part of
 
 ```sh
 git clone -b v5.3.1 --depth 1 https://github.com/espressif/esp-idf.git
-cd esp-idf && ./install.sh esp32s3 && source ./export.sh
+cd esp-idf && ./install.sh esp32 && source ./export.sh
 ```
 
-The S3's JTAG pins are fixed and already reserved for this in `pins.h`:
+The chip's JTAG pins are fixed in silicon and already reserved for this
+in `pins.h`:
 
-| JTAG signal | GPIO |
-|-------------|------|
-| TMS         | 42   |
-| TCK         | 39   |
-| TDI         | 41   |
-| TDO         | 40   |
+| JTAG signal | GPIO | Also known as |
+|-------------|------|---------------|
+| TMS         | 14   | MTMS          |
+| TCK         | 13   | MTCK          |
+| TDI         | 12   | MTDI          |
+| TDO         | 15   | MTDO          |
+
+**Watch GPIO12 (TDI):** it doubles as a boot-strapping pin that selects
+flash voltage. If it's pulled high while the board powers on or resets,
+most WROOM-32 modules (3.3V flash) will fail to boot. This is normally
+only a risk while your J-Link is actively driving the JTAG lines during
+a debug session, not during ordinary flashing/running — but if the
+board won't boot with the J-Link connected, disconnect the J-Link's TDI
+line (or the whole probe) before power-cycling, then reconnect once
+it's up.
 
 Wire your J-Link's TMS/TCK/TDI/TDO to those four pins, plus GND and
 VTref (3.3V) from the board. Then, with the board also connected over
@@ -215,7 +225,7 @@ USB for flashing/console:
 
 ```sh
 # Terminal 1: OpenOCD, using ESP-IDF's bundled config + SEGGER's J-Link driver
-openocd -f interface/jlink.cfg -f target/esp32s3.cfg
+openocd -f interface/jlink.cfg -f target/esp32.cfg
 
 # Terminal 2: build + flash as usual, then launch GDB against OpenOCD
 idf.py build flash
@@ -228,11 +238,9 @@ work as normal. If `openocd` isn't on your PATH, ESP-IDF ships its own
 copy under `$IDF_PATH/../.espressif/tools/openocd-esp32/`; `idf.py
 openocd` runs that copy for you instead of the two-terminal dance above.
 
-Alternative: the S3 also has a built-in USB-JTAG bridge on its native USB
-port, so `idf.py openocd`/`idf.py gdb` will work over a single USB-C
-cable with no J-Link at all if you ever want to debug without external
-hardware. Since you specifically want to use the J-Link, the external
-wiring above is what to use; the pins are just reserved either way.
+Unlike the S3, this chip has no native USB, so there's no single-cable
+USB-JTAG alternative — the external J-Link wiring above is the only way
+to get JTAG on this board, which is exactly what you asked for anyway.
 
 ## Future internet work
 

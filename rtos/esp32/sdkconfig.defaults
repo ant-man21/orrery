@@ -1,15 +1,12 @@
-# Target: ESP32-S3 (full-size DevKitC-1, native USB + WiFi/BT for the
-# planned internet link, dedicated JTAG pins for external J-Link debugging).
-CONFIG_IDF_TARGET="esp32s3"
+# Target: classic ESP32-WROOM-32 (USB-C devkit, single port -- no native
+# USB peripheral on this chip, so flashing/console go over its UART-USB
+# bridge chip; WiFi/BT still available for the planned internet link;
+# JTAG for external J-Link debugging over the chip's fixed GPIO12-15).
+CONFIG_IDF_TARGET="esp32"
 
 # Give MotionTask's FPU-heavy double math and the future networking stack
 # in CommTask room; matches the generous headroom the STM32 build used.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
-
-# JTAG (external J-Link on GPIO39-42) and the native-USB port are both
-# available on the S3; USB Serial/JTAG console is left on so idf.py
-# monitor keeps working over the same USB-C cable used for flashing.
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # Task Watchdog: matches the STM32 IWDG's ~4s independent watchdog that
 # resets the board if MotionTask ever stops refreshing it.

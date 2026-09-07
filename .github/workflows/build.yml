@@ -210,7 +210,7 @@ jobs:
           # command not found" with $IDF_PATH still set from the image's
           # ENV, since that part isn't entrypoint-dependent).
           . "$IDF_PATH/export.sh"
-          idf.py set-target esp32s3
+          idf.py set-target esp32
           idf.py build
 
       - name: Upload firmware artifacts
