@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Reproducible build via Espressif's official ESP-IDF Docker image --
-# no local toolchain install required, just Docker. Pinned to a specific
-# image tag (not `latest`) so this always builds against the exact same
+# Build the firmware -- natively if you already have ESP-IDF installed
+# and sourced (checks for `idf.py` on PATH first), otherwise falls back
+# to Espressif's official Docker image so a fresh clone always builds
+# somewhere with zero setup. The Docker fallback is pinned to a specific
+# image tag (not `latest`) so it always builds against the exact same
 # compiler/SDK version, on this machine or CI.
 #
 # Usage:
@@ -9,13 +11,22 @@
 #   ./build.sh fullclean     # any idf.py subcommand works
 #
 # Flashing/monitoring over USB (and J-Link JTAG debugging) need direct
-# device access this container doesn't have by default -- see README.md
-# for those; this script is for compiling only.
+# device access the Docker path doesn't have by default -- see
+# README.md for those; either path here is for compiling only.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-IDF_DOCKER_IMAGE="espressif/idf:v5.3.1"
 CMD="${*:-build}"
+
+if command -v idf.py >/dev/null 2>&1; then
+    echo "Using local ESP-IDF install ($(command -v idf.py))"
+    idf.py set-target esp32
+    idf.py $CMD
+    exit 0
+fi
+
+echo "No local idf.py on PATH -- falling back to Docker (espressif/idf:v5.3.1)"
+IDF_DOCKER_IMAGE="espressif/idf:v5.3.1"
 
 docker run --rm \
     -v "$PWD":/project \
