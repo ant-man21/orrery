@@ -225,12 +225,22 @@ USB for flashing/console:
 
 ```sh
 # Terminal 1: OpenOCD, using ESP-IDF's bundled config + SEGGER's J-Link driver
-openocd -f interface/jlink.cfg -f target/esp32.cfg
+openocd -f interface/jlink.cfg -f target/esp32.cfg -c "adapter speed 4000"
 
 # Terminal 2: build + flash as usual, then launch GDB against OpenOCD
 idf.py build flash
 idf.py gdb
 ```
+
+The `adapter speed` flag matters more than it looks: OpenOCD defaults to a
+very conservative 100kHz JTAG clock and just warns about it rather than
+failing outright, but at that speed the initial GDB/OpenOCD handshake can
+lose the race and GDB bails with a confusing
+`Remote replied unexpectedly to 'vMustReplyEmpty'` error that looks like a
+tool version mismatch but isn't — confirmed by hitting this exact error
+repeatedly at 100kHz and having it disappear for good once the link was
+sped up to 4000kHz. If `idf.py gdb` fails with that error, this is the
+first thing to check, before suspecting your wiring or tool versions.
 
 `idf.py gdb` drops you at a GDB prompt already attached to the running
 target — `break MotionTaskStart`, `continue`, `next`/`step`, etc. all
