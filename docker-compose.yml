@@ -1,0 +1,29 @@
+# Build Orrery's UEFI firmware in Docker instead of installing the edk2
+# toolchain (GCC cross-compilers, iasl, nasm, mtools, ...) on your host.
+# Works the same way on Docker Desktop for Mac, Windows, and Linux, since
+# the actual compiling always happens inside the Linux build image -- only
+# this repo checkout (bind-mounted below) needs to be native to your OS.
+#
+# Usage (from the repo root):
+#   docker compose run --rm build q35        # -> Build/OvmfX64/...
+#   docker compose run --rm build arm-virt    # -> Build/ArmVirtQemu-AArch64/...
+#   docker compose run --rm build sbsa        # -> Build/SbsaQemu/..., SbsaOrreryPkg/vars/
+#   docker compose run --rm build all
+#   docker compose run --rm build q35 -d -C   # flags pass through to build.sh
+#   docker compose run --rm build bash        # interactive shell in the build image
+#
+# Or use ./docker-build.sh <target> [flags] as a shorthand for the above.
+# See docs/docker_build.md for the full writeup.
+#
+# Outputs land directly under the repo (Build/, <Platform>/vars/, etc. --
+# the same paths a host-native build.sh would produce) because /workspace
+# is a bind mount, not a copy: this is compiling your local checkout, not
+# a snapshot of it, and nothing is left behind in the image or container.
+services:
+  build:
+    build:
+      context: ./docker
+    image: orrery-build:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
